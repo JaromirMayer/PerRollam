@@ -20,6 +20,8 @@ class Spolek_Hlasovani_MVP {
         add_action('admin_post_spolek_create_vote', [__CLASS__, 'handle_create_vote']);
         add_action('admin_post_spolek_cast_vote', [__CLASS__, 'handle_cast_vote']);
         add_action('admin_post_spolek_export_csv', [__CLASS__, 'handle_export_csv']);
+        add_action('spolek_vote_reminder', [__CLASS__, 'handle_cron_reminder'], 10, 2);
+        add_action('spolek_vote_close', [__CLASS__, 'handle_cron_close'], 10, 1);
 
         // Query var pro detail
         add_filter('query_vars', function($vars){
@@ -27,6 +29,78 @@ class Spolek_Hlasovani_MVP {
             return $vars;
         });
     }
+    
+    public static function handle_cron_reminder(int $vote_post_id, string $type) {
+    // type: reminder48 | reminder24
+    $post = get_post($vote_post_id);
+    if (!$post || $post->post_type !== self::CPT) return;
+
+    [$start_ts, $end_ts, $text] = self::get_vote_meta($vote_post_id);
+
+    // připomínka jen pokud ještě neskončilo
+    if (self::get_status((int)$start_ts, (int)$end_ts) !== 'open') return;
+
+    $link = self::vote_detail_url($vote_post_id);
+    $subject = ($type === 'reminder48')
+        ? 'Připomínka: 48 hodin do konce hlasování – ' . $post->post_title
+        : 'Připomínka: 24 hodin do konce hlasování – ' . $post->post_title;
+
+    foreach (self::get_members() as $u) {
+        // posílat jen těm, kdo ještě nehlasovali
+        if (self::user_has_voted($vote_post_id, (int)$u->ID)) continue;
+
+        $body = "Připomínka hlasování per rollam.\n\n"
+              . "Název: {$post->post_title}\n"
+              . "Odkaz: $link\n"
+              . "Deadline: " . date_i18n('j.n.Y H:i', (int)$end_ts) . "\n\n"
+              . "Plné znění návrhu:\n"
+              . $text . "\n";
+
+        self::send_member_mail($vote_post_id, $u, $type, $subject, $body);
+    }
+}
+
+public static function handle_cron_close(int $vote_post_id) {
+    $post = get_post($vote_post_id);
+    if (!$post || $post->post_type !== self::CPT) return;
+
+    [$start_ts, $end_ts, $text] = self::get_vote_meta($vote_post_id);
+
+    // poslat výsledek jen po skončení
+    if (self::get_status((int)$start_ts, (int)$end_ts) !== 'closed') return;
+
+    global $wpdb;
+    $table = $wpdb->prefix . self::TABLE;
+
+    $counts = $wpdb->get_results($wpdb->prepare(
+        "SELECT choice, COUNT(*) as c FROM $table WHERE vote_post_id=%d GROUP BY choice",
+        $vote_post_id
+    ), ARRAY_A);
+
+    $map = ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
+    foreach ($counts as $row) {
+        $ch = $row['choice'];
+        if (isset($map[$ch])) $map[$ch] = (int)$row['c'];
+    }
+
+    $link = self::vote_detail_url($vote_post_id);
+    $subject = 'Výsledek hlasování: ' . $post->post_title;
+
+    $body = "Hlasování per rollam bylo ukončeno.\n\n"
+          . "Název: {$post->post_title}\n"
+          . "Odkaz: $link\n"
+          . "Ukončeno: " . date_i18n('j.n.Y H:i', (int)$end_ts) . "\n\n"
+          . "Výsledek (počty hlasů):\n"
+          . "ANO: {$map['ANO']}\n"
+          . "NE: {$map['NE']}\n"
+          . "ZDRŽEL SE: {$map['ZDRZEL']}\n\n"
+          . "Plné znění návrhu:\n"
+          . $text . "\n";
+
+    foreach (self::get_members() as $u) {
+        self::send_member_mail($vote_post_id, $u, 'result', $subject, $body);
+    }
+}
 
     public static function activate() {
         global $wpdb;
@@ -48,6 +122,23 @@ class Spolek_Hlasovani_MVP {
             KEY idx_user (user_id)
         ) $charset_collate;";
         dbDelta($sql);
+        
+        $table_mail = $wpdb->prefix . 'spolek_vote_mail_log';
+
+        $sql2 = "CREATE TABLE $table_mail (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            vote_post_id BIGINT UNSIGNED NOT NULL,
+            user_id BIGINT UNSIGNED NOT NULL,
+            mail_type VARCHAR(20) NOT NULL,   -- announce | reminder48 | reminder24 | result
+            sent_at DATETIME NOT NULL,
+            status VARCHAR(10) NOT NULL,      -- sent | fail
+            error_text TEXT NULL,
+            PRIMARY KEY (id),
+            UNIQUE KEY uniq_mail (vote_post_id, user_id, mail_type),
+            KEY idx_vote (vote_post_id),
+            KEY idx_user (user_id)
+        ) $charset_collate;";
+        dbDelta($sql2);
 
         // Přidat capability adminovi a roli spravce_hlasovani (pokud existuje)
         if ($admin = get_role('administrator')) {
@@ -75,6 +166,98 @@ class Spolek_Hlasovani_MVP {
         // Jeden shortcode, který umí list + detail + (pro správce) create form
         add_shortcode('spolek_hlasovani_portal', [__CLASS__, 'render_portal']);
     }
+    
+    private static function portal_base_url() : string {
+    // Sem dej přesnou URL stránky, kde máš shortcode [spolek_hlasovani_portal]
+    // U tebe typicky /clenove/hlasovani/
+    return home_url('/clenove/hlasovani/');
+}
+
+private static function vote_detail_url(int $vote_post_id) : string {
+    return add_query_arg('spolek_vote', $vote_post_id, self::portal_base_url());
+}
+
+private static function get_members() : array {
+    // Vrátí WP_User[] pro role clen + spravce_hlasovani (správce je obvykle taky člen)
+    $users = get_users([
+        'role__in' => ['clen', 'spravce_hlasovani'],
+        'fields'   => ['ID', 'user_email', 'display_name'],
+        'number'   => 200,
+    ]);
+    return is_array($users) ? $users : [];
+}
+
+private static function mail_already_sent(int $vote_post_id, int $user_id, string $type) : bool {
+    global $wpdb;
+    $t = $wpdb->prefix . 'spolek_vote_mail_log';
+    $id = $wpdb->get_var($wpdb->prepare(
+        "SELECT id FROM $t WHERE vote_post_id=%d AND user_id=%d AND mail_type=%s LIMIT 1",
+        $vote_post_id, $user_id, $type
+    ));
+    return !empty($id);
+}
+
+private static function log_mail(int $vote_post_id, int $user_id, string $type, string $status, string $error = null) : void {
+    global $wpdb;
+    $t = $wpdb->prefix . 'spolek_vote_mail_log';
+
+    // INSERT IGNORE loguje jen jednou (uniq_mail)
+    $wpdb->query($wpdb->prepare(
+        "INSERT IGNORE INTO $t (vote_post_id, user_id, mail_type, sent_at, status, error_text)
+         VALUES (%d, %d, %s, %s, %s, %s)",
+        $vote_post_id,
+        $user_id,
+        $type,
+        current_time('mysql'),
+        $status,
+        $error
+    ));
+}
+
+private static function send_member_mail(int $vote_post_id, WP_User $u, string $type, string $subject, string $body) : void {
+    if (empty($u->user_email)) return;
+
+    if (self::mail_already_sent($vote_post_id, (int)$u->ID, $type)) {
+        return; // už jednou odesláno
+    }
+
+    $headers = ['Content-Type: text/plain; charset=UTF-8'];
+
+    // wp_mail vrací bool; chyby se často propisují přes wp_mail_failed hook (neřešíme zde)
+    $ok = wp_mail($u->user_email, $subject, $body, $headers);
+
+    if ($ok) {
+        self::log_mail($vote_post_id, (int)$u->ID, $type, 'sent', null);
+    } else {
+        self::log_mail($vote_post_id, (int)$u->ID, $type, 'fail', 'wp_mail returned false');
+    }
+}
+
+private static function schedule_vote_events(int $vote_post_id, int $start_ts, int $end_ts) : void {
+    $now = current_time('timestamp');
+
+    // close event (výsledek) - vždy
+    if ($end_ts > $now) {
+        if (!wp_next_scheduled('spolek_vote_close', [$vote_post_id])) {
+            wp_schedule_single_event($end_ts + 5, 'spolek_vote_close', [$vote_post_id]);
+        }
+    }
+
+    // reminder 48h a 24h – jen když to dává smysl
+    $t48 = $end_ts - (48 * HOUR_IN_SECONDS);
+    if ($t48 > $now + 60) {
+        if (!wp_next_scheduled('spolek_vote_reminder', [$vote_post_id, 'reminder48'])) {
+            wp_schedule_single_event($t48, 'spolek_vote_reminder', [$vote_post_id, 'reminder48']);
+        }
+    }
+
+    $t24 = $end_ts - (24 * HOUR_IN_SECONDS);
+    if ($t24 > $now + 60) {
+        if (!wp_next_scheduled('spolek_vote_reminder', [$vote_post_id, 'reminder24'])) {
+            wp_schedule_single_event($t24, 'spolek_vote_reminder', [$vote_post_id, 'reminder24']);
+        }
+    }
+}
 
     private static function is_manager() : bool {
         if (!is_user_logged_in()) return false;
@@ -353,6 +536,25 @@ class Spolek_Hlasovani_MVP {
         update_post_meta($post_id, '_spolek_text', $text);
         update_post_meta($post_id, '_spolek_start_ts', (int)$start_ts);
         update_post_meta($post_id, '_spolek_end_ts', (int)$end_ts);
+        
+        // naplánovat připomínky + výsledek
+self::schedule_vote_events((int)$post_id, (int)$start_ts, (int)$end_ts);
+
+// odeslat oznámení všem členům
+$link = self::vote_detail_url((int)$post_id);
+$subject = 'Vyhlášeno hlasování: ' . $title;
+
+$body = "Bylo vyhlášeno hlasování per rollam.\n\n"
+      . "Název: $title\n"
+      . "Odkaz: $link\n"
+      . "Hlasování je otevřené od: " . date_i18n('j.n.Y H:i', (int)$start_ts) . "\n"
+      . "Deadline: " . date_i18n('j.n.Y H:i', (int)$end_ts) . "\n\n"
+      . "Plné znění návrhu:\n"
+      . $text . "\n";
+
+foreach (self::get_members() as $u) {
+    self::send_member_mail((int)$post_id, $u, 'announce', $subject, $body);
+}
 
         // MVP: email notifikace zatím neřešíme automaticky (doplníme v dalším kroku)
         wp_safe_redirect(add_query_arg('created', '1', $return_to));
