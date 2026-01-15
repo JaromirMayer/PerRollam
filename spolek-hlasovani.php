@@ -129,9 +129,9 @@ public static function handle_cron_close(int $vote_post_id) {
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             vote_post_id BIGINT UNSIGNED NOT NULL,
             user_id BIGINT UNSIGNED NOT NULL,
-            mail_type VARCHAR(20) NOT NULL,   -- announce | reminder48 | reminder24 | result
+            mail_type VARCHAR(20) NOT NULL,
             sent_at DATETIME NOT NULL,
-            status VARCHAR(10) NOT NULL,      -- sent | fail
+            status VARCHAR(10) NOT NULL,
             error_text TEXT NULL,
             PRIMARY KEY (id),
             UNIQUE KEY uniq_mail (vote_post_id, user_id, mail_type),
@@ -178,10 +178,9 @@ private static function vote_detail_url(int $vote_post_id) : string {
 }
 
 private static function get_members() : array {
-    // Vrátí WP_User[] pro role clen + spravce_hlasovani (správce je obvykle taky člen)
+    // Vrátí WP_User[] (důležité kvůli type-hintu)
     $users = get_users([
         'role__in' => ['clen', 'spravce_hlasovani'],
-        'fields'   => ['ID', 'user_email', 'display_name'],
         'number'   => 200,
     ]);
     return is_array($users) ? $users : [];
