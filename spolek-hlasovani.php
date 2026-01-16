@@ -30,8 +30,10 @@ class Spolek_Hlasovani_MVP {
         });
     }
     
-    public static function handle_cron_reminder(int $vote_post_id, string $type) {
+    public static function handle_cron_reminder($vote_post_id, $type) {
     // type: reminder48 | reminder24
+    $vote_post_id = (int) $vote_post_id;
+    $type = (string) $type;
     $post = get_post($vote_post_id);
     if (!$post || $post->post_type !== self::CPT) return;
 
@@ -60,7 +62,9 @@ class Spolek_Hlasovani_MVP {
     }
 }
 
-public static function handle_cron_close(int $vote_post_id) {
+public static function handle_cron_close($vote_post_id) {
+    $vote_post_id = (int) $vote_post_id;
+    $type = (string) $type;
     $post = get_post($vote_post_id);
     if (!$post || $post->post_type !== self::CPT) return;
 
@@ -177,13 +181,11 @@ private static function vote_detail_url(int $vote_post_id) : string {
     return add_query_arg('spolek_vote', $vote_post_id, self::portal_base_url());
 }
 
-private static function get_members() : array {
-    // Vrátí WP_User[] (důležité kvůli type-hintu)
-    $users = get_users([
+private static function get_members() {
+    return get_users([
         'role__in' => ['clen', 'spravce_hlasovani'],
         'number'   => 200,
     ]);
-    return is_array($users) ? $users : [];
 }
 
 private static function mail_already_sent(int $vote_post_id, int $user_id, string $type) : bool {
@@ -213,7 +215,9 @@ private static function log_mail(int $vote_post_id, int $user_id, string $type, 
     ));
 }
 
-private static function send_member_mail(int $vote_post_id, WP_User $u, string $type, string $subject, string $body) : void {
+private static function send_member_mail($vote_post_id, $u, $type, $subject, $body) {
+    $vote_post_id = (int) $vote_post_id;
+    $type = (string) $type;
     if (empty($u->user_email)) return;
 
     if (self::mail_already_sent($vote_post_id, (int)$u->ID, $type)) {
