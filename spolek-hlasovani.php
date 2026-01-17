@@ -237,7 +237,7 @@ private static function send_member_mail($vote_post_id, $u, $type, $subject, $bo
 }
 
 private static function schedule_vote_events(int $vote_post_id, int $start_ts, int $end_ts) : void {
-    $now = current_time('timestamp');
+    $now = time();
 
     // close event (výsledek) - vždy
     if ($end_ts > $now) {
@@ -282,7 +282,7 @@ private static function schedule_vote_events(int $vote_post_id, int $start_ts, i
     }
 
     private static function get_status(int $start_ts, int $end_ts) : string {
-        $now = current_time('timestamp');
+        $now = time();
         if ($now < $start_ts) return 'upcoming';
         if ($now > $end_ts) return 'closed';
         return 'open';
@@ -341,7 +341,7 @@ private static function schedule_vote_events(int $vote_post_id, int $start_ts, i
 
     private static function render_create_form() : string {
         $action = esc_url(admin_url('admin-post.php'));
-        $now = current_time('timestamp');
+        $now = time();
         $default_end = $now + (7 * DAY_IN_SECONDS);
 
         $html  = '<h2>Nové hlasování</h2>';
@@ -398,7 +398,7 @@ private static function schedule_vote_events(int $vote_post_id, int $start_ts, i
             $html .= '<a href="'.esc_url($link).'">' . esc_html(get_the_title()) . '</a>';
             $html .= ' — <em>' . esc_html($label) . '</em>';
             if ($start_ts && $end_ts) {
-                $html .= ' (od ' . esc_html(date_i18n('j.n.Y H:i', $start_ts)) . ' do ' . esc_html(date_i18n('j.n.Y H:i', $end_ts)) . ')';
+                $html .= ' (od ' . esc_html(wp_date('j.n.Y H:i', $start_ts)) . ' do ' . esc_html(date_i18n('j.n.Y H:i', $end_ts)) . ')';
             }
             $html .= '</li>';
         }
@@ -419,7 +419,7 @@ private static function schedule_vote_events(int $vote_post_id, int $start_ts, i
 
         $html = '<h2>' . esc_html($post->post_title) . '</h2>';
         if ($start_ts && $end_ts) {
-            $html .= '<p><strong>Termín:</strong> ' . esc_html(date_i18n('j.n.Y H:i', $start_ts)) . ' – ' . esc_html(date_i18n('j.n.Y H:i', $end_ts)) . '</p>';
+            $html .= '<p><strong>Termín:</strong> ' . esc_html(wp_date('j.n.Y H:i', $start_ts)) . ' – ' . esc_html(date_i18n('j.n.Y H:i', $end_ts)) . '</p>';
         }
 
         $html .= '<div style="white-space:pre-wrap; padding:12px; border:1px solid #ddd;">' . esc_html($text) . '</div>';
