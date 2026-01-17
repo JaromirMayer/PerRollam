@@ -20,6 +20,7 @@ class Spolek_Hlasovani_MVP {
         add_action('admin_post_spolek_create_vote', [__CLASS__, 'handle_create_vote']);
         add_action('admin_post_spolek_cast_vote', [__CLASS__, 'handle_cast_vote']);
         add_action('admin_post_spolek_export_csv', [__CLASS__, 'handle_export_csv']);
+        add_action('admin_post_spolek_download_pdf', [__CLASS__, 'handle_download_pdf']);
         add_action('spolek_vote_reminder', [__CLASS__, 'handle_cron_reminder'], 10, 2);
         add_action('spolek_vote_close', [__CLASS__, 'handle_cron_close'], 10, 1);
 
@@ -29,6 +30,32 @@ class Spolek_Hlasovani_MVP {
             return $vars;
         });
     }
+    
+    public static function handle_download_pdf() {
+    if (!is_user_logged_in() || !self::is_manager()) {
+        wp_die('Nemáte oprávnění.');
+    }
+
+    $vote_post_id = (int)($_GET['vote_post_id'] ?? 0);
+    if (!$vote_post_id) wp_die('Neplatné hlasování.');
+
+    $nonce = $_GET['_nonce'] ?? '';
+    if (!$nonce || !wp_verify_nonce($nonce, 'spolek_download_pdf_'.$vote_post_id)) {
+        wp_die('Neplatný nonce.');
+    }
+
+    $path = (string) get_post_meta($vote_post_id, '_spolek_pdf_path', true);
+    if (!$path || !file_exists($path)) {
+        wp_die('Soubor nenalezen.');
+    }
+
+    $filename = basename($path);
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="'.$filename.'"');
+    header('Content-Length: ' . filesize($path));
+    readfile($path);
+    exit;
+}
     
     public static function handle_cron_reminder($vote_post_id, $type) {
     // type: reminder48 | reminder24
@@ -100,9 +127,16 @@ public static function handle_cron_close($vote_post_id) {
           . "ZDRŽEL SE: {$map['ZDRZEL']}\n\n"
           . "Plné znění návrhu:\n"
           . $text . "\n";
+    
+    $pdf_path = self::generate_pdf_minutes($vote_post_id, $map, $text, (int)$start_ts, (int)$end_ts);
+
+$attachments = [];
+if ($pdf_path && file_exists($pdf_path)) {
+    $attachments[] = $pdf_path;
+}
 
     foreach (self::get_members() as $u) {
-        self::send_member_mail($vote_post_id, $u, 'result', $subject, $body);
+        self::send_member_mail($vote_post_id, $u, 'result', $subject, $body, $attachments);
     }
 }
 
@@ -170,7 +204,119 @@ public static function handle_cron_close($vote_post_id) {
         // Jeden shortcode, který umí list + detail + (pro správce) create form
         add_shortcode('spolek_hlasovani_portal', [__CLASS__, 'render_portal']);
     }
-    
+  
+    private static function pdf_upload_dir() : array {
+    $up = wp_upload_dir();
+    $dir = trailingslashit($up['basedir']) . 'spolek-hlasovani';
+    $url = trailingslashit($up['baseurl']) . 'spolek-hlasovani';
+    if (!file_exists($dir)) {
+        wp_mkdir_p($dir);
+    }
+
+    // Volitelné: pokus o zamezení přímého přístupu (Apache)
+    $ht = $dir . '/.htaccess';
+    if (!file_exists($ht)) {
+        @file_put_contents($ht, "Deny from all\n");
+    }
+
+    return ['dir' => $dir, 'url' => $url];
+}
+
+private static function load_dompdf() : bool {
+    if (class_exists('\\Dompdf\\Dompdf')) return true;
+
+    $autoload = __DIR__ . '/vendor/autoload.php';
+    if (file_exists($autoload)) {
+        require_once $autoload;
+    }
+
+    return class_exists('\\Dompdf\\Dompdf');
+}
+
+private static function generate_pdf_minutes(int $vote_post_id, array $map, string $text, int $start_ts, int $end_ts) : ?string {
+    if (!self::load_dompdf()) {
+        return null;
+    }
+
+    $post = get_post($vote_post_id);
+    if (!$post) return null;
+
+    $tz = wp_timezone();
+
+    $title = $post->post_title;
+    $generated = wp_date('j.n.Y H:i', time(), $tz);
+    $start_s   = wp_date('j.n.Y H:i', $start_ts, $tz);
+    $end_s     = wp_date('j.n.Y H:i', $end_ts, $tz);
+
+    $ano    = (int)($map['ANO'] ?? 0);
+    $ne     = (int)($map['NE'] ?? 0);
+    $zdrzel = (int)($map['ZDRZEL'] ?? 0);
+    $total  = $ano + $ne + $zdrzel;
+
+    // HTML pro PDF
+    $html = '<!doctype html><html><head><meta charset="utf-8">
+    <style>
+      body { font-family: DejaVu Sans, sans-serif; font-size: 12px; line-height: 1.35; }
+      h1 { font-size: 18px; margin: 0 0 10px 0; }
+      h2 { font-size: 14px; margin: 16px 0 8px 0; }
+      .box { border: 1px solid #333; padding: 10px; margin: 10px 0; }
+      table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+      th, td { border: 1px solid #333; padding: 6px; text-align: left; }
+      .muted { color: #555; }
+      pre { white-space: pre-wrap; font-family: DejaVu Sans, sans-serif; }
+    </style>
+    </head><body>';
+
+    $html .= '<h1>Zápis o hlasování per rollam</h1>';
+    $html .= '<div class="muted">Vygenerováno: ' . esc_html($generated) . '</div>';
+
+    $html .= '<div class="box">';
+    $html .= '<strong>Název hlasování:</strong> ' . esc_html($title) . '<br>';
+    $html .= '<strong>ID hlasování:</strong> ' . (int)$vote_post_id . '<br>';
+    $html .= '<strong>Otevřené od:</strong> ' . esc_html($start_s) . '<br>';
+    $html .= '<strong>Deadline:</strong> ' . esc_html($end_s) . '<br>';
+    $html .= '</div>';
+
+    $html .= '<h2>Výsledek</h2>';
+    $html .= '<table>
+        <tr><th>Volba</th><th>Počet</th></tr>
+        <tr><td>ANO</td><td>' . $ano . '</td></tr>
+        <tr><td>NE</td><td>' . $ne . '</td></tr>
+        <tr><td>ZDRŽEL SE</td><td>' . $zdrzel . '</td></tr>
+        <tr><td><strong>Celkem</strong></td><td><strong>' . $total . '</strong></td></tr>
+    </table>';
+
+    $html .= '<h2>Plné znění návrhu</h2>';
+    $html .= '<div class="box"><pre>' . esc_html($text) . '</pre></div>';
+
+    $html .= '</body></html>';
+
+    // Dompdf render
+    $options = new \Dompdf\Options();
+    $options->set('isRemoteEnabled', false);
+    $options->set('defaultFont', 'DejaVu Sans');
+
+    $dompdf = new \Dompdf\Dompdf($options);
+    $dompdf->loadHtml($html, 'UTF-8');
+    $dompdf->setPaper('A4', 'portrait');
+    $dompdf->render();
+
+    $out = self::pdf_upload_dir();
+    $fname = 'zapis-' . $vote_post_id . '-' . wp_date('Ymd-His', time(), $tz) . '.pdf';
+    $path = trailingslashit($out['dir']) . $fname;
+
+    $pdf = $dompdf->output();
+    if (!$pdf) return null;
+
+    $ok = @file_put_contents($path, $pdf);
+    if (!$ok) return null;
+
+    // Ulož poslední PDF do meta (pro stažení správcem)
+    update_post_meta($vote_post_id, '_spolek_pdf_path', $path);
+    update_post_meta($vote_post_id, '_spolek_pdf_generated_at', current_time('mysql'));
+
+    return $path;
+}
     private static function portal_base_url() : string {
     // Sem dej přesnou URL stránky, kde máš shortcode [spolek_hlasovani_portal]
     // U tebe typicky /clenove/hlasovani/
@@ -215,9 +361,10 @@ private static function log_mail(int $vote_post_id, int $user_id, string $type, 
     ));
 }
 
-private static function send_member_mail($vote_post_id, $u, $type, $subject, $body) {
+private static function send_member_mail($vote_post_id, $u, $type, $subject, $body, $attachments = []) {
     $vote_post_id = (int) $vote_post_id;
     $type = (string) $type;
+
     if (empty($u->user_email)) return;
 
     if (self::mail_already_sent($vote_post_id, (int)$u->ID, $type)) {
@@ -226,8 +373,8 @@ private static function send_member_mail($vote_post_id, $u, $type, $subject, $bo
 
     $headers = ['Content-Type: text/plain; charset=UTF-8'];
 
-    // wp_mail vrací bool; chyby se často propisují přes wp_mail_failed hook (neřešíme zde)
-    $ok = wp_mail($u->user_email, $subject, $body, $headers);
+    // 5. parametr = přílohy (pole cest k souborům)
+    $ok = wp_mail($u->user_email, $subject, $body, $headers, (array)$attachments);
 
     if ($ok) {
         self::log_mail($vote_post_id, (int)$u->ID, $type, 'sent', null);
@@ -501,6 +648,20 @@ private static function schedule_vote_events(int $vote_post_id, int $start_ts, i
         $html .= '</form>';
 
         return $html;
+        
+        $pdf_path = (string) get_post_meta($vote_post_id, '_spolek_pdf_path', true);
+if ($pdf_path && file_exists($pdf_path)) {
+    $dl = admin_url('admin-post.php');
+    $dl = add_query_arg([
+        'action' => 'spolek_download_pdf',
+        'vote_post_id' => $vote_post_id,
+        '_nonce' => wp_create_nonce('spolek_download_pdf_'.$vote_post_id),
+    ], $dl);
+
+    $html .= '<p><a class="button" href="'.esc_url($dl).'">Stáhnout zápis PDF</a></p>';
+} else {
+    $html .= '<p style="opacity:.8;">Zápis PDF zatím není vygenerován (vygeneruje se po ukončení hlasování).</p>';
+}
     }
 
     public static function handle_create_vote() {
