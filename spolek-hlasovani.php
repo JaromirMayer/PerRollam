@@ -360,8 +360,8 @@ private static function schedule_vote_events(int $vote_post_id, int $start_ts, i
         $html .= '<p><label>Název (interní):<br><input required type="text" name="title" style="width:100%"></label></p>';
         $html .= '<p><label>Plné znění návrhu usnesení:<br><textarea required name="text" rows="8" style="width:100%"></textarea></label></p>';
 
-        $html .= '<p><label>Start (YYYY-MM-DD HH:MM) – serverový čas:<br><input required type="text" name="start" value="'.esc_attr(date('Y-m-d H:i', $now)).'"></label></p>';
-        $html .= '<p><label>Deadline (YYYY-MM-DD HH:MM):<br><input required type="text" name="end" value="'.esc_attr(date('Y-m-d H:i', $default_end)).'"></label></p>';
+        $html .= '<p><label>Start (YYYY-MM-DD HH:MM) – serverový čas:<br><input required type="text" name="start" value="'.esc_attr(wp_date('Y-m-d H:i', $now)).'"></label></p>';
+        $html .= '<p><label>Deadline (YYYY-MM-DD HH:MM):<br><input required type="text" name="end" value="'.esc_attr(wp_date('Y-m-d H:i', $default_end)).'"></label></p>';
 
         $html .= '<p><button type="submit">Vyhlásit hlasování</button></p>';
         $html .= '<p style="opacity:.8;">Volby jsou pevně: <strong>ANO / NE / ZDRŽEL SE</strong>. Po odeslání už nelze hlas změnit.</p>';
@@ -519,8 +519,14 @@ private static function schedule_vote_events(int $vote_post_id, int $start_ts, i
         $start = sanitize_text_field($_POST['start'] ?? '');
         $end   = sanitize_text_field($_POST['end'] ?? '');
 
-        $start_ts = strtotime($start);
-        $end_ts   = strtotime($end);
+        $tz = wp_timezone();
+
+        $start_dt = DateTimeImmutable::createFromFormat('Y-m-d H:i', $start, $tz);
+        $end_dt   = DateTimeImmutable::createFromFormat('Y-m-d H:i', $end, $tz);
+
+        $start_ts = $start_dt ? $start_dt->getTimestamp() : 0;
+        $end_ts   = $end_dt ? $end_dt->getTimestamp() : 0;
+
 
         if (!$title || !$text || !$start_ts || !$end_ts || $end_ts <= $start_ts) {
             self::redirect_with_error('Neplatné údaje (zkontrolujte datum/čas).');
