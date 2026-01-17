@@ -54,7 +54,7 @@ class Spolek_Hlasovani_MVP {
         $body = "Připomínka hlasování per rollam.\n\n"
               . "Název: {$post->post_title}\n"
               . "Odkaz: $link\n"
-              . "Deadline: " . date_i18n('j.n.Y H:i', (int)$end_ts) . "\n\n"
+              . "Deadline: " . wp_date('j.n.Y H:i', (int)$end_ts, wp_timezone()) . "\n\n"
               . "Plné znění návrhu:\n"
               . $text . "\n";
 
@@ -93,7 +93,7 @@ public static function handle_cron_close($vote_post_id) {
     $body = "Hlasování per rollam bylo ukončeno.\n\n"
           . "Název: {$post->post_title}\n"
           . "Odkaz: $link\n"
-          . "Ukončeno: " . date_i18n('j.n.Y H:i', (int)$end_ts) . "\n\n"
+          . "Ukončeno: " . wp_date('j.n.Y H:i', (int)$end_ts, wp_timezone()) . "\n\n"
           . "Výsledek (počty hlasů):\n"
           . "ANO: {$map['ANO']}\n"
           . "NE: {$map['NE']}\n"
@@ -398,8 +398,7 @@ private static function schedule_vote_events(int $vote_post_id, int $start_ts, i
             $html .= '<a href="'.esc_url($link).'">' . esc_html(get_the_title()) . '</a>';
             $html .= ' — <em>' . esc_html($label) . '</em>';
             if ($start_ts && $end_ts) {
-                $html .= ' (od ' . esc_html(wp_date('j.n.Y H:i', $start_ts)) . ' do ' . esc_html(date_i18n('j.n.Y H:i', $end_ts)) . ')';
-            }
+                $html .= ' (od ' . esc_html(wp_date('j.n.Y H:i', $start_ts)) . ' do ' . esc_html(wp_date('j.n.Y H:i', $end_ts)) . ')';}
             $html .= '</li>';
         }
         wp_reset_postdata();
@@ -419,8 +418,7 @@ private static function schedule_vote_events(int $vote_post_id, int $start_ts, i
 
         $html = '<h2>' . esc_html($post->post_title) . '</h2>';
         if ($start_ts && $end_ts) {
-            $html .= '<p><strong>Termín:</strong> ' . esc_html(wp_date('j.n.Y H:i', $start_ts)) . ' – ' . esc_html(date_i18n('j.n.Y H:i', $end_ts)) . '</p>';
-        }
+            $html .= '<p><strong>Termín:</strong> ' . esc_html(wp_date('j.n.Y H:i', $start_ts)) . ' – ' . esc_html(wp_date('j.n.Y H:i', $end_ts)) . '</p>';}
 
         $html .= '<div style="white-space:pre-wrap; padding:12px; border:1px solid #ddd;">' . esc_html($text) . '</div>';
 
@@ -556,8 +554,8 @@ $subject = 'Vyhlášeno hlasování: ' . $title;
 $body = "Bylo vyhlášeno hlasování per rollam.\n\n"
       . "Název: $title\n"
       . "Odkaz: $link\n"
-      . "Hlasování je otevřené od: " . date_i18n('j.n.Y H:i', (int)$start_ts) . "\n"
-      . "Deadline: " . date_i18n('j.n.Y H:i', (int)$end_ts) . "\n\n"
+      . "Hlasování je otevřené od: " . wp_date('j.n.Y H:i', (int)$start_ts, wp_timezone()) . "\n"
+      . "Deadline: " . wp_date('j.n.Y H:i', (int)$end_ts, wp_timezone()) . "\n\n"
       . "Plné znění návrhu:\n"
       . $text . "\n";
 
