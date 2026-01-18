@@ -67,36 +67,37 @@ public static function handle_member_pdf() {
     $sig = (string)($_GET['sig'] ?? '');
 
     if (!$vote_post_id || !$uid || !$exp || !$sig) {
-        wp_die('Neplatný odkaz.');
+        wp_die('Neplatný odkaz (chybí parametr).');
     }
 
-    // Exspirace
     if ($exp < time()) {
         wp_die('Odkaz vypršel.');
     }
 
-    // Když není přihlášen, přesměruj na login a vrať se zpět na ten stejný odkaz
+    // Pokud není přihlášený, přesměruj na login a vrať se zpět na tento odkaz
     if (!is_user_logged_in()) {
         $current_url = (is_ssl() ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
         wp_safe_redirect(wp_login_url($current_url));
         exit;
     }
 
-    // Musí to otevřít přesně ten uživatel, pro kterého byl link vygenerován
     $current_uid = get_current_user_id();
-    if ($current_uid !== $uid) {
-        wp_die('Neplatný odkaz.');
+
+    // Pokud je přihlášený jiný uživatel než uid v odkazu, povol jen správci
+    if ($current_uid !== $uid && !current_user_can(self::CAP_MANAGE)) {
+        wp_die('Odkaz je určen jinému uživateli.');
     }
 
     // Ověření podpisu
     $expected = self::member_pdf_sig($uid, $vote_post_id, $exp);
     if (!hash_equals($expected, $sig)) {
-        wp_die('Neplatný odkaz.');
+        wp_die('Neplatný podpis odkazu.');
     }
 
-    // Role / oprávnění
+    // Role / oprávnění (člen/správce/admin)
     $user = wp_get_current_user();
     $roles = (array)$user->roles;
+
     if (!in_array('clen', $roles, true) && !in_array('spravce_hlasovani', $roles, true) && !current_user_can(self::CAP_MANAGE)) {
         wp_die('Nemáte oprávnění.');
     }
