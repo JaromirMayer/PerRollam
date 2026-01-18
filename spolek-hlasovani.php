@@ -21,6 +21,7 @@ class Spolek_Hlasovani_MVP {
         add_action('admin_post_spolek_cast_vote', [__CLASS__, 'handle_cast_vote']);
         add_action('admin_post_spolek_export_csv', [__CLASS__, 'handle_export_csv']);
         add_action('admin_post_spolek_download_pdf', [__CLASS__, 'handle_download_pdf']);
+        add_action('admin_post_spolek_member_pdf', [__CLASS__, 'handle_member_pdf']);
         add_action('spolek_vote_reminder', [__CLASS__, 'handle_cron_reminder'], 10, 2);
         add_action('spolek_vote_close', [__CLASS__, 'handle_cron_close'], 10, 1);
 
@@ -56,7 +57,41 @@ class Spolek_Hlasovani_MVP {
     readfile($path);
     exit;
 }
-    
+
+public static function handle_member_pdf() {
+    if (!is_user_logged_in()) {
+        wp_die('Musíte být přihlášeni.');
+    }
+
+    $vote_post_id = (int)($_GET['vote_post_id'] ?? 0);
+    if (!$vote_post_id) wp_die('Neplatné hlasování.');
+
+    $user_id = get_current_user_id();
+    $nonce = $_GET['_nonce'] ?? '';
+    if (!$nonce || !wp_verify_nonce($nonce, 'spolek_member_pdf_'.$vote_post_id.'_'.$user_id)) {
+        wp_die('Neplatný odkaz.');
+    }
+
+    $user = wp_get_current_user();
+    $roles = (array)$user->roles;
+
+    // povolit členům + správci + adminovi
+    if (!in_array('clen', $roles, true) && !in_array('spravce_hlasovani', $roles, true) && !current_user_can(self::CAP_MANAGE)) {
+        wp_die('Nemáte oprávnění.');
+    }
+
+    $path = (string) get_post_meta($vote_post_id, '_spolek_pdf_path', true);
+    if (!$path || !file_exists($path)) {
+        wp_die('Soubor nenalezen.');
+    }
+
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="'.basename($path).'"');
+    header('Content-Length: ' . filesize($path));
+    readfile($path);
+    exit;
+}
+
     public static function handle_cron_reminder($vote_post_id, $type) {
     // type: reminder48 | reminder24
     $vote_post_id = (int) $vote_post_id;
@@ -136,8 +171,20 @@ if ($pdf_path && file_exists($pdf_path)) {
 }
 
     foreach (self::get_members() as $u) {
-        self::send_member_mail($vote_post_id, $u, 'result', $subject, $body, $attachments);
-    }
+
+    $pdf_link = add_query_arg([
+        'action' => 'spolek_member_pdf',
+        'vote_post_id' => $vote_post_id,
+        '_nonce' => wp_create_nonce('spolek_member_pdf_'.$vote_post_id.'_'.$u->ID),
+    ], admin_url('admin-post.php'));
+
+    $body_with_link = $body
+        . "\nZápis PDF ke stažení (vyžaduje přihlášení):\n"
+        . $pdf_link . "\n";
+
+    self::send_member_mail($vote_post_id, $u, 'result', $subject, $body_with_link, $attachments);
+}
+
 }
 
     public static function activate() {
