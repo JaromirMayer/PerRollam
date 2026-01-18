@@ -204,7 +204,7 @@ $pdf_link = add_query_arg([
     'uid'          => $uid,
     'exp'          => $exp,
     'sig'          => $sig,
-], admin_url('admin-post.php'));
+], admin_url('/clenove/stazeni-zapisu'));
 
 $body_with_link = $body
     . "\n\nZápis PDF ke stažení (vyžaduje přihlášení):\n"
@@ -278,7 +278,56 @@ self::send_member_mail($vote_post_id, $u, 'result', $subject, $body_with_link, $
     public static function register_shortcodes() {
         // Jeden shortcode, který umí list + detail + (pro správce) create form
         add_shortcode('spolek_hlasovani_portal', [__CLASS__, 'render_portal']);
+        add_shortcode('spolek_pdf_landing', [__CLASS__, 'shortcode_pdf_landing']);
     }
+    
+    public static function shortcode_pdf_landing() : string {
+
+    $vote_post_id = (int)($_GET['vote_post_id'] ?? 0);
+    $uid = (int)($_GET['uid'] ?? 0);
+    $exp = (int)($_GET['exp'] ?? 0);
+    $sig = (string)($_GET['sig'] ?? '');
+
+    if (!$vote_post_id || !$uid || !$exp || !$sig) {
+        return '<p>Neplatný odkaz.</p>';
+    }
+
+    // když není přihlášený, vrať ho na login a po loginu zpět sem
+    if (!is_user_logged_in()) {
+        $current_url = (is_ssl() ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+        wp_safe_redirect(wp_login_url($current_url));
+        exit;
+    }
+
+    $download_url = add_query_arg([
+        'action'       => 'spolek_member_pdf',
+        'vote_post_id' => $vote_post_id,
+        'uid'          => $uid,
+        'exp'          => $exp,
+        'sig'          => $sig,
+    ], admin_url('admin-post.php'));
+
+    // kam po stažení (uprav si podle reality)
+    $after_url = home_url('/clenove/profil/');
+
+    $download_url = esc_url($download_url);
+    $after_url = esc_url($after_url);
+
+    return '
+<div style="max-width:720px;margin:20px auto;padding:16px;border:1px solid #ddd;">
+  <h2>Stahuji zápis PDF…</h2>
+  <p>Pokud se stažení nespustí automaticky, klikni zde: <a href="'.$download_url.'">Stáhnout PDF</a></p>
+  <p>Po stažení budeš přesměrován na profil.</p>
+
+  <iframe src="'.$download_url.'" style="display:none;width:0;height:0;border:0;"></iframe>
+
+  <script>
+    setTimeout(function(){
+      window.location.href = "'.$after_url.'";
+    }, 1500);
+  </script>
+</div>';
+}
     
     private static function member_pdf_sig(int $user_id, int $vote_post_id, int $exp) : string {
     $data = $user_id . '|' . $vote_post_id . '|' . $exp;
