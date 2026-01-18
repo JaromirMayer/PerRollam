@@ -22,6 +22,7 @@ class Spolek_Hlasovani_MVP {
         add_action('admin_post_spolek_export_csv', [__CLASS__, 'handle_export_csv']);
         add_action('admin_post_spolek_download_pdf', [__CLASS__, 'handle_download_pdf']);
         add_action('admin_post_spolek_member_pdf', [__CLASS__, 'handle_member_pdf']);
+        add_action('admin_post_nopriv_spolek_member_pdf', [__CLASS__, 'handle_member_pdf']);
         add_action('spolek_vote_reminder', [__CLASS__, 'handle_cron_reminder'], 10, 2);
         add_action('spolek_vote_close', [__CLASS__, 'handle_cron_close'], 10, 1);
 
@@ -59,23 +60,43 @@ class Spolek_Hlasovani_MVP {
 }
 
 public static function handle_member_pdf() {
-    if (!is_user_logged_in()) {
-        wp_die('Musíte být přihlášeni.');
-    }
 
     $vote_post_id = (int)($_GET['vote_post_id'] ?? 0);
-    if (!$vote_post_id) wp_die('Neplatné hlasování.');
+    $uid = (int)($_GET['uid'] ?? 0);
+    $exp = (int)($_GET['exp'] ?? 0);
+    $sig = (string)($_GET['sig'] ?? '');
 
-    $user_id = get_current_user_id();
-    $nonce = $_GET['_nonce'] ?? '';
-    if (!$nonce || !wp_verify_nonce($nonce, 'spolek_member_pdf_'.$vote_post_id.'_'.$user_id)) {
+    if (!$vote_post_id || !$uid || !$exp || !$sig) {
         wp_die('Neplatný odkaz.');
     }
 
+    // Exspirace
+    if ($exp < time()) {
+        wp_die('Odkaz vypršel.');
+    }
+
+    // Když není přihlášen, přesměruj na login a vrať se zpět na ten stejný odkaz
+    if (!is_user_logged_in()) {
+        $current_url = (is_ssl() ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+        wp_safe_redirect(wp_login_url($current_url));
+        exit;
+    }
+
+    // Musí to otevřít přesně ten uživatel, pro kterého byl link vygenerován
+    $current_uid = get_current_user_id();
+    if ($current_uid !== $uid) {
+        wp_die('Neplatný odkaz.');
+    }
+
+    // Ověření podpisu
+    $expected = self::member_pdf_sig($uid, $vote_post_id, $exp);
+    if (!hash_equals($expected, $sig)) {
+        wp_die('Neplatný odkaz.');
+    }
+
+    // Role / oprávnění
     $user = wp_get_current_user();
     $roles = (array)$user->roles;
-
-    // povolit členům + správci + adminovi
     if (!in_array('clen', $roles, true) && !in_array('spravce_hlasovani', $roles, true) && !current_user_can(self::CAP_MANAGE)) {
         wp_die('Nemáte oprávnění.');
     }
@@ -86,7 +107,7 @@ public static function handle_member_pdf() {
     }
 
     header('Content-Type: application/pdf');
-    header('Content-Disposition: attachment; filename="'.basename($path).'"');
+    header('Content-Disposition: attachment; filename="' . basename($path) . '"');
     header('Content-Length: ' . filesize($path));
     readfile($path);
     exit;
@@ -172,17 +193,23 @@ if ($pdf_path && file_exists($pdf_path)) {
 
     foreach (self::get_members() as $u) {
 
-    $pdf_link = add_query_arg([
-        'action' => 'spolek_member_pdf',
-        'vote_post_id' => $vote_post_id,
-        '_nonce' => wp_create_nonce('spolek_member_pdf_'.$vote_post_id.'_'.$u->ID),
-    ], admin_url('admin-post.php'));
+    $exp = time() + (30 * DAY_IN_SECONDS); // platnost odkazu 30 dní
+$uid = (int) $u->ID;
+$sig = self::member_pdf_sig($uid, (int)$vote_post_id, $exp);
 
-    $body_with_link = $body
-        . "\nZápis PDF ke stažení (vyžaduje přihlášení):\n"
-        . $pdf_link . "\n";
+$pdf_link = add_query_arg([
+    'action'       => 'spolek_member_pdf',
+    'vote_post_id' => (int)$vote_post_id,
+    'uid'          => $uid,
+    'exp'          => $exp,
+    'sig'          => $sig,
+], admin_url('admin-post.php'));
 
-    self::send_member_mail($vote_post_id, $u, 'result', $subject, $body_with_link, $attachments);
+$body_with_link = $body
+    . "\n\nZápis PDF ke stažení (vyžaduje přihlášení):\n"
+    . $pdf_link . "\n";
+
+self::send_member_mail($vote_post_id, $u, 'result', $subject, $body_with_link, $attachments);
 }
 
 }
@@ -251,7 +278,12 @@ if ($pdf_path && file_exists($pdf_path)) {
         // Jeden shortcode, který umí list + detail + (pro správce) create form
         add_shortcode('spolek_hlasovani_portal', [__CLASS__, 'render_portal']);
     }
-  
+    
+    private static function member_pdf_sig(int $user_id, int $vote_post_id, int $exp) : string {
+    $data = $user_id . '|' . $vote_post_id . '|' . $exp;
+    return hash_hmac('sha256', $data, wp_salt('spolek_member_pdf'));
+}
+
     private static function pdf_upload_dir() : array {
     $up = wp_upload_dir();
     $dir = trailingslashit($up['basedir']) . 'spolek-hlasovani';
