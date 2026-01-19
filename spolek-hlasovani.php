@@ -194,21 +194,26 @@ if ($pdf_path && file_exists($pdf_path)) {
 
     foreach (self::get_members() as $u) {
 
-    $exp = time() + (30 * DAY_IN_SECONDS); // platnost odkazu 30 dní
+    $exp = time() + (30 * DAY_IN_SECONDS);
 $uid = (int) $u->ID;
 $sig = self::member_pdf_sig($uid, (int)$vote_post_id, $exp);
 
+// landing page (tvoje stránka se shortcode)
+$landing = home_url('/clenove/stazeni-zapisu/');
+$landing = trailingslashit($landing);
+
 $pdf_link = add_query_arg([
-    'action'       => 'spolek_member_pdf',
-    'vote_post_id' => (int)$vote_post_id,
+    'vote_post_id' => (int) $vote_post_id,
     'uid'          => $uid,
     'exp'          => $exp,
     'sig'          => $sig,
-], admin_url('/clenove/stazeni-zapisu'));
+], $landing);
 
+// DŮLEŽITÉ: dej link na vlastní řádek a obal do < > (Gmail pak méně často „ořízne“ URL)
 $body_with_link = $body
-    . "\n\nZápis PDF ke stažení (vyžaduje přihlášení):\n"
-    . $pdf_link . "\n";
+    . "\n\nZápis PDF ke stažení (vyžaduje přihlášení):\n<"
+    . $pdf_link
+    . ">\n";
 
 self::send_member_mail($vote_post_id, $u, 'result', $subject, $body_with_link, $attachments);
 }
