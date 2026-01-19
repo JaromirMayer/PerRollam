@@ -7,10 +7,16 @@
 
 if (!defined('ABSPATH')) exit;
 
+require_once __DIR__ . '/includes/class-spolek-audit.php';
+
 class Spolek_Hlasovani_MVP {
     const CPT = 'spolek_hlasovani';
     const TABLE = 'spolek_votes';
     const CAP_MANAGE = 'manage_spolek_hlasovani';
+    const META_RULESET      = '_spolek_ruleset';        // 'standard' | 'two_thirds'
+    const META_QUORUM_RATIO = '_spolek_quorum_ratio';   // např. 0.5
+    const META_PASS_RATIO   = '_spolek_pass_ratio';     // např. 0.5 nebo 0.6666667
+    const META_BASE         = '_spolek_pass_base';      // 'valid' (ANO+NE) | 'all' (všichni členové)
 
     public static function init() {
         add_action('init', [__CLASS__, 'register_cpt']);
@@ -170,7 +176,14 @@ public static function handle_cron_close($vote_post_id) {
         $ch = $row['choice'];
         if (isset($map[$ch])) $map[$ch] = (int)$row['c'];
     }
+    
+    $eval = self::evaluate_vote((int)$vote_post_id, $map);
 
+    // uložit výsledek do meta (ať je vidět i v detailu)
+    update_post_meta($vote_post_id, self::META_RESULT_LABEL, $eval['label']);
+    update_post_meta($vote_post_id, self::META_RESULT_EXPLAIN, $eval['explain']);
+    update_post_meta($vote_post_id, self::META_RESULT_ADOPTED, $eval['adopted'] ? '1' : '0');
+    
     $link = self::vote_detail_url($vote_post_id);
     $subject = 'Výsledek hlasování: ' . $post->post_title;
 
@@ -182,6 +195,8 @@ public static function handle_cron_close($vote_post_id) {
           . "ANO: {$map['ANO']}\n"
           . "NE: {$map['NE']}\n"
           . "ZDRŽEL SE: {$map['ZDRZEL']}\n\n"
+          . "\nVyhodnocení: " . $eval['label'] . "\n"
+          . $eval['explain'] . "\n"
           . "Plné znění návrhu:\n"
           . $text . "\n";
     
@@ -257,6 +272,8 @@ self::send_member_mail($vote_post_id, $u, 'result', $subject, $body_with_link, $
             KEY idx_user (user_id)
         ) $charset_collate;";
         dbDelta($sql2);
+        
+        Spolek_Audit::install_table();
 
         // Přidat capability adminovi a roli spravce_hlasovani (pokud existuje)
         if ($admin = get_role('administrator')) {
@@ -333,7 +350,84 @@ self::send_member_mail($vote_post_id, $u, 'result', $subject, $body_with_link, $
   </script>
 </div>';
 }
-    
+
+private static function evaluate_vote(int $vote_post_id, array $counts) : array {
+    $members_total = count(self::get_members());
+
+    $yes = (int)($counts['ANO'] ?? 0);
+    $no  = (int)($counts['NE'] ?? 0);
+    $abs = (int)($counts['ZDRZEL'] ?? 0);
+
+    $participated = $yes + $no + $abs;
+    $valid_votes  = $yes + $no;
+
+    $ruleset = (string) get_post_meta($vote_post_id, self::META_RULESET, true);
+    if (!$ruleset) $ruleset = 'standard';
+
+    $quorum_ratio = (float) get_post_meta($vote_post_id, self::META_QUORUM_RATIO, true);
+    $pass_ratio   = (float) get_post_meta($vote_post_id, self::META_PASS_RATIO, true);
+    $base         = (string) get_post_meta($vote_post_id, self::META_BASE, true);
+
+    if ($ruleset === 'standard') {
+        if ($quorum_ratio <= 0) $quorum_ratio = 0.0;
+        if ($pass_ratio <= 0)   $pass_ratio   = 0.5;
+        if (!$base)             $base         = 'valid';
+    } elseif ($ruleset === 'two_thirds') {
+        if ($quorum_ratio <= 0) $quorum_ratio = 0.5;
+        if ($pass_ratio <= 0)   $pass_ratio   = 2/3;
+        if (!$base)             $base         = 'valid';
+    } else {
+        // fallback
+        if ($pass_ratio <= 0) $pass_ratio = 0.5;
+        if (!$base) $base = 'valid';
+    }
+
+    $quorum_required = ($quorum_ratio > 0)
+        ? (int) ceil($members_total * $quorum_ratio)
+        : 0;
+
+    $quorum_met = ($quorum_required === 0) ? true : ($participated >= $quorum_required);
+
+    // základ pro výpočet potřebných ANO
+    $denom = ($base === 'all') ? $members_total : $valid_votes;
+
+    if ($denom <= 0) {
+    $yes_needed = PHP_INT_MAX;
+} else {
+    if ($pass_ratio <= 0.5 + 1e-9) {
+        $yes_needed = (int) floor($denom * $pass_ratio) + 1; // přísná většina
+    } else {
+        $yes_needed = (int) ceil($denom * $pass_ratio);      // kvalifikovaná většina
+    }
+}
+
+    $adopted = $quorum_met && ($yes >= $yes_needed);
+
+    $label = !$quorum_met
+        ? 'NEPLATNÉ (nesplněno kvórum)'
+        : ($adopted ? 'PŘIJATO' : 'NEPŘIJATO');
+
+    $explain = !$quorum_met
+        ? "Kvórum: $participated / $quorum_required (účast / minimum)."
+        : "ANO: $yes, NE: $no, ZDRŽEL: $abs. Potřebné ANO: $yes_needed (základ: ".($base==='all'?'všichni členové':'platné hlasy').").";
+
+    return [
+        'members_total'    => $members_total,
+        'yes'              => $yes,
+        'no'               => $no,
+        'abstain'          => $abs,
+        'participated'     => $participated,
+        'valid_votes'      => $valid_votes,
+        'quorum_required'  => $quorum_required,
+        'quorum_met'       => $quorum_met,
+        'yes_needed'       => $yes_needed,
+        'adopted'          => $adopted,
+        'label'            => $label,
+        'explain'          => $explain,
+        'ruleset'          => $ruleset,
+    ];
+}
+
     private static function member_pdf_sig(int $user_id, int $vote_post_id, int $exp) : string {
     $data = $user_id . '|' . $vote_post_id . '|' . $exp;
     return hash_hmac('sha256', $data, wp_salt('spolek_member_pdf'));
@@ -644,6 +738,47 @@ private static function schedule_vote_events(int $vote_post_id, int $start_ts, i
         $html .= '<p><label>Start (YYYY-MM-DD HH:MM) – serverový čas:<br><input required type="text" name="start" value="'.esc_attr(wp_date('Y-m-d H:i', $now)).'"></label></p>';
         $html .= '<p><label>Deadline (YYYY-MM-DD HH:MM):<br><input required type="text" name="end" value="'.esc_attr(wp_date('Y-m-d H:i', $default_end)).'"></label></p>';
 
+        // 3.8 – vyhodnocení (ruleset/quorum/pass/base)
+        $html .= '<h3>Vyhodnocení (3.8)</h3>';
+
+        $html .= '<p><label>Typ hlasování:<br>'
+        . '<select name="ruleset" id="spolek_ruleset">'
+        . '<option value="standard" selected>Standard (většina ANO &gt; NE)</option>'
+        . '<option value="two_thirds">2/3 většina</option>'
+        . '</select>'
+        . '</label></p>';
+
+        $html .= '<p><label>Kvórum účasti (% všech členů, 0 = bez kvóra):<br>'
+        . '<input type="number" name="quorum_ratio" id="spolek_quorum_ratio" min="0" max="100" step="0.01" value="0" style="width:120px;">'
+        . '</label></p>';
+
+        $html .= '<p><label>Poměr pro přijetí – ANO (%):<br>'
+        . '<input type="number" name="pass_ratio" id="spolek_pass_ratio" min="0" max="100" step="0.01" value="50" style="width:120px;"> '
+        . '<span style="opacity:.8;">(50 = většina, 66.67 = dvě třetiny)</span>'
+        . '</label></p>';
+
+        $html .= '<p><label>Základ pro výpočet poměru:<br>'
+        . '<select name="pass_base" id="spolek_pass_base">'
+        . '<option value="valid" selected>Platné hlasy (ANO + NE)</option>'
+        . '<option value="all">Všichni členové</option>'
+        . '</select>'
+        . '</label></p>';
+
+        $html .= '<script>
+        (function(){
+        var r = document.getElementById("spolek_ruleset");
+        var q = document.getElementById("spolek_quorum_ratio");
+        var p = document.getElementById("spolek_pass_ratio");
+        var b = document.getElementById("spolek_pass_base");
+        if(!r||!q||!p||!b) return;
+
+        r.addEventListener("change", function(){
+        if (r.value === "standard") { q.value = 0; p.value = 50; b.value = "valid"; }
+        if (r.value === "two_thirds") { q.value = 50; p.value = 66.67; b.value = "valid"; }
+        });
+        })();
+            </script>';
+
         $html .= '<p><button type="submit">Vyhlásit hlasování</button></p>';
         $html .= '<p style="opacity:.8;">Volby jsou pevně: <strong>ANO / NE / ZDRŽEL SE</strong>. Po odeslání už nelze hlas změnit.</p>';
         $html .= '</form>';
@@ -810,7 +945,7 @@ if ($pdf_path && file_exists($pdf_path)) {
         $title = sanitize_text_field($_POST['title'] ?? '');
         $text  = sanitize_textarea_field($_POST['text'] ?? '');
         $start = sanitize_text_field($_POST['start'] ?? '');
-        $end   = sanitize_text_field($_POST['end'] ?? '');
+        $end   = sanitize_text_field($_POST['end'] ?? '');  
 
         $tz = wp_timezone();
 
@@ -838,6 +973,38 @@ if ($pdf_path && file_exists($pdf_path)) {
         update_post_meta($post_id, '_spolek_text', $text);
         update_post_meta($post_id, '_spolek_start_ts', (int)$start_ts);
         update_post_meta($post_id, '_spolek_end_ts', (int)$end_ts);
+        
+        Spolek_Audit::log((int)$post_id, get_current_user_id(), 'vote_created', [
+        'title' => $title,
+        ]);
+        
+        $ruleset = sanitize_text_field($_POST['ruleset'] ?? 'standard');
+        if (!in_array($ruleset, ['standard', 'two_thirds'], true)) $ruleset = 'standard';
+
+        $pass_base = sanitize_text_field($_POST['pass_base'] ?? 'valid');
+        if (!in_array($pass_base, ['valid', 'all'], true)) $pass_base = 'valid';
+
+        $to_ratio = function($v) {
+            $v = trim((string)$v);
+            if ($v === '') return null;
+            $v = str_replace(',', '.', $v);
+            $r = ((float)$v) / 100.0;
+            if ($r < 0) $r = 0;
+            if ($r > 1) $r = 1;
+            return $r;
+};
+
+$quorum_ratio = $to_ratio($_POST['quorum_ratio'] ?? '');
+$pass_ratio   = $to_ratio($_POST['pass_ratio'] ?? '');
+
+update_post_meta($post_id, self::META_RULESET, $ruleset);
+update_post_meta($post_id, self::META_BASE, $pass_base);
+
+if ($quorum_ratio === null) delete_post_meta($post_id, self::META_QUORUM_RATIO);
+else update_post_meta($post_id, self::META_QUORUM_RATIO, (string)$quorum_ratio);
+
+if ($pass_ratio === null) delete_post_meta($post_id, self::META_PASS_RATIO);
+else update_post_meta($post_id, self::META_PASS_RATIO, (string)$pass_ratio);
         
         // naplánovat připomínky + výsledek
 self::schedule_vote_events((int)$post_id, (int)$start_ts, (int)$end_ts);
