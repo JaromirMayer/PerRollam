@@ -159,6 +159,29 @@ public static function handle_cron_close($vote_post_id) {
     if (!$post || $post->post_type !== self::CPT) return;
 
     [$start_ts, $end_ts, $text] = self::get_vote_meta($vote_post_id);
+    
+    // audit: cron zavolán
+Spolek_Audit::log((int)$vote_post_id, null, 'cron_close_called', [
+    'start_ts' => (int)$start_ts,
+    'end_ts'   => (int)$end_ts,
+    'now'      => time(),
+]);
+
+// WP-Cron se může spustit o pár sekund dřív.
+// Když ještě není po deadlinu, doplánujeme uzavření za 60s a končíme.
+$now = time();
+if ($now < (int)$end_ts) {
+
+    wp_clear_scheduled_hook('spolek_vote_close', [(int)$vote_post_id]);
+    wp_schedule_single_event(((int)$end_ts) + 60, 'spolek_vote_close', [(int)$vote_post_id]);
+
+    Spolek_Audit::log((int)$vote_post_id, null, 'cron_close_rescheduled', [
+        'now'    => $now,
+        'end_ts' => (int)$end_ts,
+    ]);
+
+    return;
+}
 
     // poslat výsledek jen po skončení
     if (self::get_status((int)$start_ts, (int)$end_ts) !== 'closed') return;
@@ -564,12 +587,14 @@ private static function get_members() {
 
 private static function mail_already_sent(int $vote_post_id, int $user_id, string $type) : bool {
     global $wpdb;
-    $t = $wpdb->prefix . 'spolek_vote_mail_log';
-    $id = $wpdb->get_var($wpdb->prepare(
-        "SELECT id FROM $t WHERE vote_post_id=%d AND user_id=%d AND mail_type=%s LIMIT 1",
+    $table = $wpdb->prefix . 'spolek_vote_mail_log';
+
+    $exists = $wpdb->get_var($wpdb->prepare(
+        "SELECT id FROM $table WHERE vote_post_id=%d AND user_id=%d AND mail_type=%s LIMIT 1",
         $vote_post_id, $user_id, $type
     ));
-    return !empty($id);
+
+    return !empty($exists);
 }
 
 private static function log_mail(int $vote_post_id, int $user_id, string $type, string $status, string $error = null) : void {
@@ -611,29 +636,24 @@ private static function send_member_mail($vote_post_id, $u, $type, $subject, $bo
     }
 }
 
-private static function schedule_vote_events(int $vote_post_id, int $start_ts, int $end_ts) : void {
-    $now = time();
+private static function schedule_vote_events(int $post_id, int $start_ts, int $end_ts) : void {
 
-    // close event (výsledek) - vždy
-    if ($end_ts > $now) {
-        if (!wp_next_scheduled('spolek_vote_close', [$vote_post_id])) {
-            wp_schedule_single_event($end_ts + 5, 'spolek_vote_close', [$vote_post_id]);
-        }
+    // 1) Uzavření - vždy per konkrétní post_id
+    wp_clear_scheduled_hook('spolek_vote_close', [$post_id]);
+    wp_schedule_single_event($end_ts, 'spolek_vote_close', [$post_id]);
+
+    // 2) Reminder 48h (pokud používáš)
+    $t48 = $end_ts - 48 * HOUR_IN_SECONDS;
+    wp_clear_scheduled_hook('spolek_vote_reminder', [$post_id, 'reminder48']);
+    if ($t48 > time()) {
+        wp_schedule_single_event($t48, 'spolek_vote_reminder', [$post_id, 'reminder48']);
     }
 
-    // reminder 48h a 24h – jen když to dává smysl
-    $t48 = $end_ts - (48 * HOUR_IN_SECONDS);
-    if ($t48 > $now + 60) {
-        if (!wp_next_scheduled('spolek_vote_reminder', [$vote_post_id, 'reminder48'])) {
-            wp_schedule_single_event($t48, 'spolek_vote_reminder', [$vote_post_id, 'reminder48']);
-        }
-    }
-
-    $t24 = $end_ts - (24 * HOUR_IN_SECONDS);
-    if ($t24 > $now + 60) {
-        if (!wp_next_scheduled('spolek_vote_reminder', [$vote_post_id, 'reminder24'])) {
-            wp_schedule_single_event($t24, 'spolek_vote_reminder', [$vote_post_id, 'reminder24']);
-        }
+    // 3) Reminder 24h (pokud používáš)
+    $t24 = $end_ts - 24 * HOUR_IN_SECONDS;
+    wp_clear_scheduled_hook('spolek_vote_reminder', [$post_id, 'reminder24']);
+    if ($t24 > time()) {
+        wp_schedule_single_event($t24, 'spolek_vote_reminder', [$post_id, 'reminder24']);
     }
 }
 
@@ -659,8 +679,8 @@ private static function schedule_vote_events(int $vote_post_id, int $start_ts, i
     private static function get_status(int $start_ts, int $end_ts) : string {
         $now = time();
         if ($now < $start_ts) return 'upcoming';
-        if ($now > $end_ts) return 'closed';
-        return 'open';
+        if ($now < $end_ts) return 'open';
+        return 'closed';
     }
 
     private static function get_vote_meta(int $post_id) : array {
