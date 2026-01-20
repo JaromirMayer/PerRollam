@@ -17,6 +17,10 @@ class Spolek_Hlasovani_MVP {
     const META_QUORUM_RATIO = '_spolek_quorum_ratio';   // např. 0.5
     const META_PASS_RATIO   = '_spolek_pass_ratio';     // např. 0.5 nebo 0.6666667
     const META_BASE         = '_spolek_pass_base';      // 'valid' (ANO+NE) | 'all' (všichni členové)
+    const META_RESULT_LABEL   = '_spolek_result_label';
+    const META_RESULT_EXPLAIN = '_spolek_result_explain';
+    const META_RESULT_ADOPTED = '_spolek_result_adopted';
+
 
     public static function init() {
         add_action('init', [__CLASS__, 'register_cpt']);
@@ -136,6 +140,8 @@ public static function handle_member_pdf() {
     $subject = ($type === 'reminder48')
         ? 'Připomínka: 48 hodin do konce hlasování – ' . $post->post_title
         : 'Připomínka: 24 hodin do konce hlasování – ' . $post->post_title;
+    
+    Spolek_Audit::log((int)$vote_post_id, null, 'cron_reminder_sending', ['members'=>count(self::get_members())]);
 
     foreach (self::get_members() as $u) {
         // posílat jen těm, kdo ještě nehlasovali
@@ -154,18 +160,19 @@ public static function handle_member_pdf() {
 
 public static function handle_cron_close($vote_post_id) {
     $vote_post_id = (int) $vote_post_id;
-    $type = (string) $type;
+
+    Spolek_Audit::log($vote_post_id, null, 'cron_close_start', ['now'=>time()]);
+
     $post = get_post($vote_post_id);
     if (!$post || $post->post_type !== self::CPT) return;
 
     [$start_ts, $end_ts, $text] = self::get_vote_meta($vote_post_id);
-    
-    // audit: cron zavolán
-Spolek_Audit::log((int)$vote_post_id, null, 'cron_close_called', [
-    'start_ts' => (int)$start_ts,
-    'end_ts'   => (int)$end_ts,
-    'now'      => time(),
-]);
+
+    Spolek_Audit::log($vote_post_id, null, 'cron_close_called', [
+        'start_ts' => (int)$start_ts,
+        'end_ts'   => (int)$end_ts,
+        'now'      => time(),
+    ]);
 
 // WP-Cron se může spustit o pár sekund dřív.
 // Když ještě není po deadlinu, doplánujeme uzavření za 60s a končíme.
@@ -230,32 +237,84 @@ if ($pdf_path && file_exists($pdf_path)) {
     $attachments[] = $pdf_path;
 }
 
-    foreach (self::get_members() as $u) {
-
-    $exp = time() + (30 * DAY_IN_SECONDS);
-$uid = (int) $u->ID;
-$sig = self::member_pdf_sig($uid, (int)$vote_post_id, $exp);
-
-// landing page (tvoje stránka se shortcode)
-$landing = home_url('/clenove/stazeni-zapisu/');
-$landing = trailingslashit($landing);
-
-$pdf_link = add_query_arg([
-    'vote_post_id' => (int) $vote_post_id,
-    'uid'          => $uid,
-    'exp'          => $exp,
-    'sig'          => $sig,
-], $landing);
-
-// DŮLEŽITÉ: dej link na vlastní řádek a obal do < > (Gmail pak méně často „ořízne“ URL)
-$body_with_link = $body
-    . "\n\nZápis PDF ke stažení (vyžaduje přihlášení):\n<"
-    . $pdf_link
-    . ">\n";
-
-self::send_member_mail($vote_post_id, $u, 'result', $subject, $body_with_link, $attachments);
+if ($pdf_path && file_exists($pdf_path)) {
+    Spolek_Audit::log((int)$vote_post_id, null, 'pdf_generated', [
+        'pdf' => basename($pdf_path),
+        'bytes' => (int) filesize($pdf_path),
+        'path' => $pdf_path, // pokud nechceš cestu logovat, smaž tenhle řádek
+    ]);
+} else {
+    Spolek_Audit::log((int)$vote_post_id, null, 'pdf_generated', [
+        'pdf' => null,
+        'error' => 'pdf not generated',
+    ]);
 }
 
+
+
+// --- čítače (před foreach)
+$sent = 0;
+$skipped = 0;
+$failed = 0;
+$no_email = 0;
+$total = 0;
+
+$members = self::get_members();
+
+// audit: start rozesílky výsledků
+Spolek_Audit::log((int)$vote_post_id, null, 'result_mail_batch_start', [
+    'members' => is_array($members) ? count($members) : 0,
+    'has_pdf' => !empty($attachments) ? 1 : 0,
+]);
+
+foreach ($members as $u) {
+    $total++;
+
+    $exp = time() + (30 * DAY_IN_SECONDS);
+    $uid = (int) $u->ID;
+    $sig = self::member_pdf_sig($uid, (int)$vote_post_id, $exp);
+
+    // landing page (tvoje stránka se shortcode)
+    $landing = home_url('/clenove/stazeni-zapisu/');
+    $landing = trailingslashit($landing);
+
+    $pdf_link = add_query_arg([
+        'vote_post_id' => (int) $vote_post_id,
+        'uid'          => $uid,
+        'exp'          => $exp,
+        'sig'          => $sig,
+    ], $landing);
+
+    $body_with_link = $body
+        . "\n\nZápis PDF ke stažení (vyžaduje přihlášení):\n<"
+        . $pdf_link
+        . ">\n";
+
+    $status = self::send_member_mail($vote_post_id, $u, 'result', $subject, $body_with_link, $attachments);
+
+    if ($status === 'sent') $sent++;
+    elseif ($status === 'skip') $skipped++;
+    elseif ($status === 'no_email') $no_email++;
+    else $failed++;
+}
+
+// audit: konec rozesílky výsledků (souhrn)
+Spolek_Audit::log((int)$vote_post_id, null, 'result_mail_batch_done', [
+    'total'    => (int)$total,
+    'sent'     => (int)$sent,
+    'skip'  => (int)$skipped,
+    'no_email' => (int)$no_email,
+    'failed'   => (int)$failed,
+    'has_pdf'  => !empty($attachments) ? 1 : 0,
+]);
+
+Spolek_Audit::log($vote_post_id, null, 'close_enter', []);
+
+[$start_ts, $end_ts, $text] = self::get_vote_meta($vote_post_id);
+$status = self::get_status((int)$start_ts, (int)$end_ts);
+Spolek_Audit::log($vote_post_id, null, 'close_status', ['status' => $status]);
+
+if ($status !== 'closed') return;
 }
 
     public static function activate() {
@@ -590,7 +649,9 @@ private static function mail_already_sent(int $vote_post_id, int $user_id, strin
     $table = $wpdb->prefix . 'spolek_vote_mail_log';
 
     $exists = $wpdb->get_var($wpdb->prepare(
-        "SELECT id FROM $table WHERE vote_post_id=%d AND user_id=%d AND mail_type=%s LIMIT 1",
+        "SELECT id FROM $table
+         WHERE vote_post_id=%d AND user_id=%d AND mail_type=%s
+         LIMIT 1",
         $vote_post_id, $user_id, $type
     ));
 
@@ -618,21 +679,22 @@ private static function send_member_mail($vote_post_id, $u, $type, $subject, $bo
     $vote_post_id = (int) $vote_post_id;
     $type = (string) $type;
 
-    if (empty($u->user_email)) return;
+    if (empty($u->user_email)) return 'no_email';
 
     if (self::mail_already_sent($vote_post_id, (int)$u->ID, $type)) {
-        return; // už jednou odesláno
+        return 'skip'; // už jednou odesláno
     }
 
     $headers = ['Content-Type: text/plain; charset=UTF-8'];
 
-    // 5. parametr = přílohy (pole cest k souborům)
     $ok = wp_mail($u->user_email, $subject, $body, $headers, (array)$attachments);
 
     if ($ok) {
         self::log_mail($vote_post_id, (int)$u->ID, $type, 'sent', null);
+        return 'sent';
     } else {
         self::log_mail($vote_post_id, (int)$u->ID, $type, 'fail', 'wp_mail returned false');
+        return 'fail';
     }
 }
 
