@@ -1112,54 +1112,90 @@ foreach (self::get_members() as $u) {
         exit;
     }
 
-    public static function handle_cast_vote() {
-        if (!is_user_logged_in()) wp_die('Musíte být přihlášeni.');
-
-        $vote_post_id = (int)($_POST['vote_post_id'] ?? 0);
-        $choice = sanitize_text_field($_POST['choice'] ?? '');
-
-        if (!$vote_post_id || !in_array($choice, ['ANO','NE','ZDRZEL'], true)) {
-            self::redirect_detail_error($vote_post_id, 'Neplatná volba.');
-        }
-
-        if (!isset($_POST['_nonce']) || !wp_verify_nonce($_POST['_nonce'], 'spolek_cast_vote_'.$vote_post_id)) {
-            self::redirect_detail_error($vote_post_id, 'Neplatný nonce.');
-        }
-        
-        $return_to = self::get_return_to(home_url('/clenove/hlasovani/'));
-
-        [$start_ts, $end_ts] = self::get_vote_meta($vote_post_id);
-        if (self::get_status($start_ts, $end_ts) !== 'open') {
-            self::redirect_detail_error($vote_post_id, 'Hlasování není otevřené.');
-        }
-
-        $user_id = get_current_user_id();
-        if (self::user_has_voted($vote_post_id, $user_id)) {
-            self::redirect_detail_error($vote_post_id, 'Už jste hlasoval(a).');
-        }
-
-        global $wpdb;
-        $table = $wpdb->prefix . self::TABLE;
-
-        $ip = $_SERVER['REMOTE_ADDR'] ?? '';
-        $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
-
-        $ok = $wpdb->insert($table, [
-            'vote_post_id' => $vote_post_id,
-            'user_id'      => $user_id,
-            'choice'       => $choice,
-            'cast_at'      => current_time('mysql'),
-            'ip_hash'      => $ip ? hash('sha256', $ip) : null,
-            'ua_hash'      => $ua ? hash('sha256', $ua) : null,
-        ], ['%d','%d','%s','%s','%s','%s']);
-
-        if (!$ok) {
-            self::redirect_detail_error($vote_post_id, 'Nelze uložit hlas (možná duplicitní).');
-        }
-
-        wp_safe_redirect(add_query_arg(['spolek_vote'=>$vote_post_id, 'voted'=>'1'], $return_to));
-        exit;
+public static function handle_cast_vote() {
+    if (!is_user_logged_in()) {
+        wp_die('Musíte být přihlášeni.');
     }
+
+    $vote_post_id = (int)($_POST['vote_post_id'] ?? 0);
+    $choice = sanitize_text_field($_POST['choice'] ?? '');
+    $user_id = get_current_user_id();
+
+    // audit: pokus o hlasování
+    Spolek_Audit::log($vote_post_id ?: 0, $user_id, 'vote_cast_attempt', [
+        'choice' => $choice ?: null,
+    ]);
+
+    // validace vstupu
+    if (!$vote_post_id || !in_array($choice, ['ANO','NE','ZDRZEL'], true)) {
+        Spolek_Audit::log($vote_post_id ?: 0, $user_id, 'vote_cast_rejected', [
+            'reason' => 'invalid_choice_or_vote_id',
+            'choice' => $choice ?: null,
+        ]);
+        self::redirect_detail_error($vote_post_id, 'Neplatná volba.');
+    }
+
+    // nonce
+    if (!isset($_POST['_nonce']) || !wp_verify_nonce($_POST['_nonce'], 'spolek_cast_vote_'.$vote_post_id)) {
+        Spolek_Audit::log($vote_post_id, $user_id, 'vote_cast_rejected', [
+            'reason' => 'nonce_invalid',
+        ]);
+        self::redirect_detail_error($vote_post_id, 'Neplatný nonce.');
+    }
+
+    $return_to = self::get_return_to(home_url('/clenove/hlasovani/'));
+
+    // status
+    [$start_ts, $end_ts] = self::get_vote_meta($vote_post_id);
+    $status = self::get_status((int)$start_ts, (int)$end_ts);
+    if ($status !== 'open') {
+        Spolek_Audit::log($vote_post_id, $user_id, 'vote_cast_rejected', [
+            'reason' => 'not_open',
+            'status' => $status,
+        ]);
+        self::redirect_detail_error($vote_post_id, 'Hlasování není otevřené.');
+    }
+
+    // duplicita
+    if (self::user_has_voted($vote_post_id, $user_id)) {
+        Spolek_Audit::log($vote_post_id, $user_id, 'vote_cast_rejected', [
+            'reason' => 'already_voted',
+        ]);
+        self::redirect_detail_error($vote_post_id, 'Už jste hlasoval(a).');
+    }
+
+    // uložení hlasu
+    global $wpdb;
+    $table = $wpdb->prefix . self::TABLE;
+
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+    $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+
+    $ok = $wpdb->insert($table, [
+        'vote_post_id' => $vote_post_id,
+        'user_id'      => $user_id,
+        'choice'       => $choice,
+        'cast_at'      => current_time('mysql'),
+        'ip_hash'      => $ip ? hash('sha256', $ip) : null,
+        'ua_hash'      => $ua ? hash('sha256', $ua) : null,
+    ], ['%d','%d','%s','%s','%s','%s']);
+
+    if (!$ok) {
+        Spolek_Audit::log($vote_post_id, $user_id, 'vote_cast_failed', [
+            'reason'   => 'db_insert_failed',
+            'db_error' => $wpdb->last_error ?: null,
+        ]);
+        self::redirect_detail_error($vote_post_id, 'Nelze uložit hlas (možná duplicitní).');
+    }
+
+    // audit: hlas uložen
+    Spolek_Audit::log($vote_post_id, $user_id, 'vote_cast_saved', [
+        'choice' => $choice,
+    ]);
+
+    wp_safe_redirect(add_query_arg(['spolek_vote' => $vote_post_id, 'voted' => '1'], $return_to));
+    exit;
+}
 
     public static function handle_export_csv() {
         if (!is_user_logged_in() || !self::is_manager()) {
