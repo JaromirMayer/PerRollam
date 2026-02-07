@@ -573,7 +573,7 @@ private static function evaluate_vote(int $vote_post_id, array $counts) : array 
 private static function load_dompdf() : bool {
     if (class_exists('\\Dompdf\\Dompdf')) return true;
 
-    $autoload = SPOLEK_HLASOVANI_DIR . '/vendor/autoload.php';
+    $autoload = rtrim(SPOLEK_HLASOVANI_PATH, '/\\') . '/vendor/autoload.php';
     if (file_exists($autoload)) {
         require_once $autoload;
     }
