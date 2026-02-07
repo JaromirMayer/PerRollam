@@ -1,3 +1,7 @@
+<?php
+
+if (!defined('ABSPATH')) exit;
+
 class Spolek_Hlasovani_MVP {
     const CPT = 'spolek_hlasovani';
     const TABLE = 'spolek_votes';
