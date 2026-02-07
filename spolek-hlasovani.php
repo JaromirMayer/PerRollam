@@ -4,15 +4,24 @@
  * Description: Front-end hlasování pro členy spolku (ANO/NE/ZDRŽEL), 1 hlas na člena, uzávěrka a export CSV.
  * Version: 0.1.0
  */
+
 if (!defined('ABSPATH')) exit;
 
-if (!defined('SPOLEK_HLASOVANI_DIR')) {
-    define('SPOLEK_HLASOVANI_DIR', __DIR__);
+// Jednotné konstanty pro celý plugin
+if (!defined('SPOLEK_HLASOVANI_PATH')) {
+    define('SPOLEK_HLASOVANI_PATH', plugin_dir_path(__FILE__));
+}
+if (!defined('SPOLEK_HLASOVANI_FILE')) {
+    define('SPOLEK_HLASOVANI_FILE', __FILE__);
 }
 
-require_once __DIR__ . '/includes/class-spolek-audit.php';
-require_once __DIR__ . '/includes/class-spolek-legacy.php';
-require_once __DIR__ . '/includes/class-spolek-plugin.php';
+// Načti jen kabeláž (ne audit/legacy přímo)
+require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-plugin.php';
 
-Spolek_Plugin::init();
-register_activation_hook(__FILE__, ['Spolek_Plugin', 'activate']);
+// Spusť plugin (registruje shortcode na init atd.)
+add_action('plugins_loaded', function () {
+    Spolek_Plugin::instance()->run();
+});
+
+// Aktivace
+register_activation_hook(SPOLEK_HLASOVANI_FILE, ['Spolek_Plugin', 'activate']);

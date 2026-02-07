@@ -3,12 +3,47 @@ if (!defined('ABSPATH')) exit;
 
 final class Spolek_Plugin {
 
-    public static function init() : void {
-        // dočasně: legacy stále drží veškeré hooky (chování 1:1)
-        Spolek_Hlasovani_MVP::init();
+    /** @var self|null */
+    private static $instance = null;
+
+    /** @var bool */
+    private $booted = false;
+
+    public static function instance(): self {
+        if (self::$instance === null) {
+            self::$instance = new self();
+        }
+        return self::$instance;
     }
 
-    public static function activate() : void {
-        Spolek_Hlasovani_MVP::activate();
+    private function __construct() {}
+
+    private function load_dependencies(): void {
+        // Audit musí být dřív než legacy (legacy ho používá)
+        require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-audit.php';
+        require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-legacy.php';
+    }
+
+    public function run(): void {
+    if ($this->booted) return;
+    $this->booted = true;
+
+    $this->load_dependencies();
+
+    if (class_exists('Spolek_Hlasovani_MVP')) {
+        Spolek_Hlasovani_MVP::init();
+    }
+}
+
+    public static function activate(): void {
+        // Aktivace se může spustit v jiném kontextu – dependency načíst tady taky
+        if (defined('SPOLEK_HLASOVANI_PATH')) {
+            require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-audit.php';
+            require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-legacy.php';
+        }
+
+        if (class_exists('Spolek_Hlasovani_MVP')) {
+            Spolek_Hlasovani_MVP::activate();
+        }
     }
 }
