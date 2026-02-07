@@ -1,7 +1,14 @@
 <?php
+if (!defined('ABSPATH')) exit;
 
-/* 
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/Scripting/EmptyPHP.php to edit this template
- */
+final class Spolek_Plugin {
 
+    public static function init() : void {
+        // dočasně: legacy stále drží veškeré hooky (chování 1:1)
+        Spolek_Hlasovani_MVP::init();
+    }
+
+    public static function activate() : void {
+        Spolek_Hlasovani_MVP::activate();
+    }
+}
