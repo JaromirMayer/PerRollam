@@ -1,7 +1,16 @@
 <?php
+if (!defined('ABSPATH')) exit;
 
-/* 
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/Scripting/EmptyPHP.php to edit this template
- */
+final class Spolek_Portal {
 
+    public function register(): void {
+        add_shortcode('spolek_hlasovani_portal', [$this, 'shortcode']);
+    }
+
+    public function shortcode($atts = [], $content = null): string {
+        if (class_exists('Spolek_Hlasovani_MVP') && method_exists('Spolek_Hlasovani_MVP', 'render_portal')) {
+            return (string) Spolek_Hlasovani_MVP::render_portal();
+        }
+        return '';
+    }
+}

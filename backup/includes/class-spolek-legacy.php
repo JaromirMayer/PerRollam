@@ -419,7 +419,7 @@ public static function handle_cron_close($vote_post_id) {
 
     public static function register_shortcodes() {
         // Jeden shortcode, který umí list + detail + (pro správce) create form
-       // add_shortcode('spolek_hlasovani_portal', [__CLASS__, 'render_portal']);
+        add_shortcode('spolek_hlasovani_portal', [__CLASS__, 'render_portal']);
         add_shortcode('spolek_pdf_landing', [__CLASS__, 'shortcode_pdf_landing']);
     }
     
