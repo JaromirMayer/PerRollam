@@ -23,6 +23,7 @@ final class Spolek_Plugin {
         require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-audit.php';
         require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-legacy.php';
         require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-portal.php';
+        require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-pdf.php';
     }
 
     public function run(): void {
@@ -38,6 +39,10 @@ final class Spolek_Plugin {
         if (class_exists('Spolek_Portal')) {
             (new Spolek_Portal())->register();
         }
+        
+        if (class_exists('Spolek_PDF')) {
+            (new Spolek_PDF())->register();
+        }
     }
 
     public static function activate(): void {
@@ -46,6 +51,7 @@ final class Spolek_Plugin {
             require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-audit.php';
             require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-legacy.php';
             require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-portal.php';
+            require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-pdf.php';
         }
 
         if (class_exists('Spolek_Hlasovani_MVP')) {
