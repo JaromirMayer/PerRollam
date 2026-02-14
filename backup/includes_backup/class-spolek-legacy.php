@@ -31,8 +31,8 @@ class Spolek_Hlasovani_MVP {
         add_action('admin_post_spolek_download_pdf', [__CLASS__, 'handle_download_pdf']);
         add_action('admin_post_spolek_member_pdf', [__CLASS__, 'handle_member_pdf']);
         add_action('admin_post_nopriv_spolek_member_pdf', [__CLASS__, 'handle_member_pdf']);
-        add_action('spolek_vote_reminder', [__CLASS__, 'handle_cron_reminder'], 10, 2);
-        add_action('spolek_vote_close', [__CLASS__, 'handle_cron_close'], 10, 1);
+        // add_action('spolek_vote_reminder', [__CLASS__, 'handle_cron_reminder'], 10, 2);
+        // add_action('spolek_vote_close', [__CLASS__, 'handle_cron_close'], 10, 1);
 
         // Query var pro detail
         add_filter('query_vars', function($vars){
@@ -419,8 +419,8 @@ public static function handle_cron_close($vote_post_id) {
 
     public static function register_shortcodes() {
         // Jeden shortcode, který umí list + detail + (pro správce) create form
-        add_shortcode('spolek_hlasovani_portal', [__CLASS__, 'render_portal']);
-        add_shortcode('spolek_pdf_landing', [__CLASS__, 'shortcode_pdf_landing']);
+        // add_shortcode('spolek_hlasovani_portal', [__CLASS__, 'render_portal']);
+        // add_shortcode('spolek_pdf_landing', [__CLASS__, 'shortcode_pdf_landing']);
     }
     
     public static function shortcode_pdf_landing() : string {
@@ -740,24 +740,7 @@ private static function send_member_mail($vote_post_id, $u, $type, $subject, $bo
 }
 
 private static function schedule_vote_events(int $post_id, int $start_ts, int $end_ts) : void {
-
-    // 1) Uzavření - vždy per konkrétní post_id
-    wp_clear_scheduled_hook('spolek_vote_close', [$post_id]);
-    wp_schedule_single_event($end_ts, 'spolek_vote_close', [$post_id]);
-
-    // 2) Reminder 48h (pokud používáš)
-    $t48 = $end_ts - 48 * HOUR_IN_SECONDS;
-    wp_clear_scheduled_hook('spolek_vote_reminder', [$post_id, 'reminder48']);
-    if ($t48 > time()) {
-        wp_schedule_single_event($t48, 'spolek_vote_reminder', [$post_id, 'reminder48']);
-    }
-
-    // 3) Reminder 24h (pokud používáš)
-    $t24 = $end_ts - 24 * HOUR_IN_SECONDS;
-    wp_clear_scheduled_hook('spolek_vote_reminder', [$post_id, 'reminder24']);
-    if ($t24 > time()) {
-        wp_schedule_single_event($t24, 'spolek_vote_reminder', [$post_id, 'reminder24']);
-    }
+    Spolek_Cron::schedule_vote_events($post_id, $start_ts, $end_ts);
 }
 
     private static function is_manager() : bool {
@@ -1176,7 +1159,7 @@ if ($pass_ratio === null) delete_post_meta($post_id, self::META_PASS_RATIO);
 else update_post_meta($post_id, self::META_PASS_RATIO, (string)$pass_ratio);
         
         // naplánovat připomínky + výsledek
-self::schedule_vote_events((int)$post_id, (int)$start_ts, (int)$end_ts);
+Spolek_Cron::schedule_vote_events((int)$post_id, (int)$start_ts, (int)$end_ts);
 
 // odeslat oznámení všem členům
 $link = self::vote_detail_url((int)$post_id);
