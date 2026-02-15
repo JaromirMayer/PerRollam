@@ -151,22 +151,10 @@ public static function handle_cron_reminder($vote_post_id, $type) {
         ) $charset_collate;";
         dbDelta($sql);
         
-        $table_mail = $wpdb->prefix . 'spolek_vote_mail_log';
-
-        $sql2 = "CREATE TABLE $table_mail (
-            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-            vote_post_id BIGINT UNSIGNED NOT NULL,
-            user_id BIGINT UNSIGNED NOT NULL,
-            mail_type VARCHAR(20) NOT NULL,
-            sent_at DATETIME NOT NULL,
-            status VARCHAR(10) NOT NULL,
-            error_text TEXT NULL,
-            PRIMARY KEY (id),
-            UNIQUE KEY uniq_mail (vote_post_id, user_id, mail_type),
-            KEY idx_vote (vote_post_id),
-            KEY idx_user (user_id)
-        ) $charset_collate;";
-        dbDelta($sql2);
+        // mail log tabulka (idempotence pro wp_mail)
+            if (class_exists('Spolek_Mailer')) {
+            Spolek_Mailer::install_table();
+}
         
         Spolek_Audit::install_table();
 
@@ -457,61 +445,11 @@ public static function get_members() {
     ]);
 }
 
-private static function mail_already_sent(int $vote_post_id, int $user_id, string $type) : bool {
-    global $wpdb;
-    $table = $wpdb->prefix . 'spolek_vote_mail_log';
-
-    $exists = $wpdb->get_var($wpdb->prepare(
-        "SELECT id FROM $table
-         WHERE vote_post_id=%d AND user_id=%d AND mail_type=%s AND status='sent'
-         LIMIT 1",
-        $vote_post_id, $user_id, $type
-    ));
-
-    return !empty($exists);
-}
-
-private static function log_mail(int $vote_post_id, int $user_id, string $type, string $status, string $error = null) : void {
-    global $wpdb;
-    $t = $wpdb->prefix . 'spolek_vote_mail_log';
-
-    $wpdb->query($wpdb->prepare(
-        "INSERT INTO $t (vote_post_id, user_id, mail_type, sent_at, status, error_text)
-         VALUES (%d, %d, %s, %s, %s, %s)
-         ON DUPLICATE KEY UPDATE
-            sent_at = VALUES(sent_at),
-            status = VALUES(status),
-            error_text = VALUES(error_text)",
-        $vote_post_id,
-        $user_id,
-        $type,
-        current_time('mysql'),
-        $status,
-        $error
-    ));
-}
-
 public static function send_member_mail($vote_post_id, $u, $type, $subject, $body, $attachments = []) {
-    $vote_post_id = (int) $vote_post_id;
-    $type = (string) $type;
-
-    if (empty($u->user_email)) return 'no_email';
-
-    if (self::mail_already_sent($vote_post_id, (int)$u->ID, $type)) {
-        return 'skip'; // už jednou odesláno
+    if (!class_exists('Spolek_Mailer')) {
+        return 'mailer_missing';
     }
-
-    $headers = ['Content-Type: text/plain; charset=UTF-8'];
-
-    $ok = wp_mail($u->user_email, $subject, $body, $headers, (array)$attachments);
-
-    if ($ok) {
-        self::log_mail($vote_post_id, (int)$u->ID, $type, 'sent', null);
-        return 'sent';
-    } else {
-        self::log_mail($vote_post_id, (int)$u->ID, $type, 'fail', 'wp_mail returned false');
-        return 'fail';
-    }
+    return Spolek_Mailer::send_member_mail((int)$vote_post_id, $u, (string)$type, (string)$subject, (string)$body, (array)$attachments);
 }
 
 private static function schedule_vote_events(int $post_id, int $start_ts, int $end_ts) : void {

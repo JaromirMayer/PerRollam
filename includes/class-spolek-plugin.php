@@ -22,8 +22,8 @@ final class Spolek_Plugin {
         // Audit musí být dřív než legacy (legacy ho používá)
         require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-audit.php';
         require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-mailer.php';
-        require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-cron.php';
         require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-legacy.php';
+        require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-cron.php';
         require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-portal.php';
         require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-pdf.php';
     }
@@ -56,8 +56,8 @@ final class Spolek_Plugin {
         if (defined('SPOLEK_HLASOVANI_PATH')) {
             require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-audit.php';
             require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-mailer.php';
-            require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-cron.php';
             require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-legacy.php';
+            require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-cron.php';
             require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-portal.php';
             require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-pdf.php';
         }

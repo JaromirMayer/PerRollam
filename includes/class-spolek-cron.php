@@ -288,7 +288,7 @@ final class Spolek_Cron {
                 . $pdf_link
                 . ">\n";
 
-            $mail_status = Spolek_Hlasovani_MVP::send_member_mail($vote_post_id, $u, 'result', $subject, $body_with_link, $attachments);
+            $mail_status = Spolek_Mailer::send_member_mail($vote_post_id, $u, 'result', $subject, $body_with_link, $attachments);
 
             if ($mail_status === 'sent') $sent++;
             elseif ($mail_status === 'skip') $skipped++;
@@ -367,7 +367,7 @@ final class Spolek_Cron {
               . "Plné znění návrhu:\n"
               . $text . "\n";
 
-        Spolek_Hlasovani_MVP::send_member_mail($vote_post_id, $u, $type, $subject, $body);
+        Spolek_Mailer::send_member_mail($vote_post_id, $u, $type, $subject, $body);
     }
 }
 
