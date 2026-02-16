@@ -207,19 +207,9 @@ final class Spolek_Cron {
         update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_ATTEMPTS, (string)$attempt);
         update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_STARTED_AT, (string) time());
 
-        global $wpdb;
-        $table = $wpdb->prefix . Spolek_Hlasovani_MVP::TABLE;
-
-        $counts = $wpdb->get_results($wpdb->prepare(
-            "SELECT choice, COUNT(*) as c FROM $table WHERE vote_post_id=%d GROUP BY choice",
-            $vote_post_id
-        ), ARRAY_A);
-
-        $map = ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
-        foreach ($counts as $row) {
-            $ch = $row['choice'];
-            if (isset($map[$ch])) $map[$ch] = (int)$row['c'];
-        }
+        $map = class_exists('Spolek_Votes')
+    ? Spolek_Votes::get_counts($vote_post_id)
+    : ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
 
         $eval = Spolek_Hlasovani_MVP::evaluate_vote($vote_post_id, $map);
 

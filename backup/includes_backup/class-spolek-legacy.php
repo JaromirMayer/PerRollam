@@ -133,7 +133,12 @@ public static function handle_cron_reminder($vote_post_id, $type) {
 }
 
     public static function activate() {
-        global $wpdb;
+        
+        if (class_exists('Spolek_Votes') && method_exists('Spolek_Votes', 'install_table')) {
+    Spolek_Votes::install_table();
+} else {
+    // fallback: tvůj původní dbDelta SQL
+    global $wpdb;
         $table = $wpdb->prefix . self::TABLE;
         $charset_collate = $wpdb->get_charset_collate();
 
@@ -152,7 +157,8 @@ public static function handle_cron_reminder($vote_post_id, $type) {
             KEY idx_user (user_id)
         ) $charset_collate;";
         dbDelta($sql);
-        
+}
+
         // mail log tabulka (idempotence pro wp_mail)
             if (class_exists('Spolek_Mailer')) {
             Spolek_Mailer::install_table();
@@ -492,14 +498,10 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
     }
 
     public static function user_has_voted(int $vote_post_id, int $user_id) : bool {
-        global $wpdb;
-        $table = $wpdb->prefix . self::TABLE;
-        $exists = $wpdb->get_var($wpdb->prepare(
-            "SELECT id FROM $table WHERE vote_post_id=%d AND user_id=%d LIMIT 1",
-            $vote_post_id, $user_id
-        ));
-        return !empty($exists);
-    }
+    return class_exists('Spolek_Votes')
+        ? Spolek_Votes::has_user_voted($vote_post_id, $user_id)
+        : false;
+}
 
     public static function render_portal() {
         if (!is_user_logged_in()) {
@@ -711,49 +713,38 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
         return $html;
     }
 
-    private static function render_manager_tools(int $vote_post_id) : string {
-        global $wpdb;
-        $table = $wpdb->prefix . self::TABLE;
+ private static function render_manager_tools(int $vote_post_id) : string {
 
-        $counts = $wpdb->get_results($wpdb->prepare(
-            "SELECT choice, COUNT(*) as c FROM $table WHERE vote_post_id=%d GROUP BY choice",
-            $vote_post_id
-        ), ARRAY_A);
+    $map = class_exists('Spolek_Votes')
+        ? Spolek_Votes::get_counts($vote_post_id)
+        : ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
 
-        $map = ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
-        foreach ($counts as $row) {
-            $ch = $row['choice'];
-            if (isset($map[$ch])) $map[$ch] = (int)$row['c'];
-        }
+    $action = esc_url(admin_url('admin-post.php'));
+    $html  = '<h3>Správa (jen pro správce)</h3>';
+    $html .= '<p><strong>Souhrn:</strong> ANO: '.$map['ANO'].' | NE: '.$map['NE'].' | ZDRŽEL: '.$map['ZDRZEL'].'</p>';
 
-        $action = esc_url(admin_url('admin-post.php'));
-        $html  = '<h3>Správa (jen pro správce)</h3>';
-        $html .= '<p><strong>Souhrn:</strong> ANO: '.$map['ANO'].' | NE: '.$map['NE'].' | ZDRŽEL: '.$map['ZDRZEL'].'</p>';
+    $html .= '<form method="post" action="'.$action.'">';
+    $html .= '<input type="hidden" name="action" value="spolek_export_csv">';
+    $html .= '<input type="hidden" name="vote_post_id" value="'.(int)$vote_post_id.'">';
+    $html .= wp_nonce_field('spolek_export_csv_'.$vote_post_id, '_nonce', true, false);
+    $html .= '<button type="submit">Stáhnout CSV (hlasy)</button>';
+    $html .= '</form>';
 
-        $html .= '<form method="post" action="'.$action.'">';
-        $html .= '<input type="hidden" name="action" value="spolek_export_csv">';
-        $html .= '<input type="hidden" name="vote_post_id" value="'.(int)$vote_post_id.'">';
-        $html .= wp_nonce_field('spolek_export_csv_'.$vote_post_id, '_nonce', true, false);
-        $html .= '<button type="submit">Stáhnout CSV (hlasy)</button>';
-        $html .= '</form>';
-
-        $pdf_path = (string) get_post_meta($vote_post_id, '_spolek_pdf_path', true);
-            if ($pdf_path && file_exists($pdf_path)) {
-        $dl = admin_url('admin-post.php');
+    $pdf_path = (string) get_post_meta($vote_post_id, '_spolek_pdf_path', true);
+    if ($pdf_path && file_exists($pdf_path)) {
         $dl = add_query_arg([
-        'action'        => 'spolek_download_pdf',
-        'vote_post_id'  => (int)$vote_post_id,
-        '_nonce'        => wp_create_nonce('spolek_download_pdf_'.$vote_post_id),
-    ], $dl);
+            'action'        => 'spolek_download_pdf',
+            'vote_post_id'  => (int)$vote_post_id,
+            '_nonce'        => wp_create_nonce('spolek_download_pdf_'.$vote_post_id),
+        ], admin_url('admin-post.php'));
 
         $html .= '<p><a class="button" href="'.esc_url($dl).'">Stáhnout zápis PDF</a></p>';
     } else {
         $html .= '<p style="opacity:.8;">Zápis PDF zatím není vygenerován (vygeneruje se po ukončení hlasování).</p>';
     }
 
-        return $html;
-
- }
+    return $html;
+}
 
     public static function handle_create_vote() {
         if (!is_user_logged_in() || !self::is_manager()) {
@@ -904,29 +895,18 @@ public static function handle_cast_vote() {
         self::redirect_detail_error($vote_post_id, 'Už jste hlasoval(a).');
     }
 
-    // uložení hlasu
+    $ok = class_exists('Spolek_Votes')
+    ? Spolek_Votes::insert_vote($vote_post_id, $user_id, $choice)
+    : false;
+
+if (!$ok) {
     global $wpdb;
-    $table = $wpdb->prefix . self::TABLE;
-
-    $ip = $_SERVER['REMOTE_ADDR'] ?? '';
-    $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
-
-    $ok = $wpdb->insert($table, [
-        'vote_post_id' => $vote_post_id,
-        'user_id'      => $user_id,
-        'choice'       => $choice,
-        'cast_at'      => current_time('mysql'),
-        'ip_hash'      => $ip ? hash('sha256', $ip) : null,
-        'ua_hash'      => $ua ? hash('sha256', $ua) : null,
-    ], ['%d','%d','%s','%s','%s','%s']);
-
-    if (!$ok) {
-        Spolek_Audit::log($vote_post_id, $user_id, 'vote_cast_failed', [
-            'reason'   => 'db_insert_failed',
-            'db_error' => $wpdb->last_error ?: null,
-        ]);
-        self::redirect_detail_error($vote_post_id, 'Nelze uložit hlas (možná duplicitní).');
-    }
+    Spolek_Audit::log($vote_post_id, $user_id, 'vote_cast_failed', [
+        'reason'   => 'db_insert_failed',
+        'db_error' => $wpdb->last_error ?: null,
+    ]);
+    self::redirect_detail_error($vote_post_id, 'Nelze uložit hlas (možná duplicitní).');
+}
 
     // audit: hlas uložen
     Spolek_Audit::log($vote_post_id, $user_id, 'vote_cast_saved', [
@@ -949,13 +929,7 @@ public static function handle_cast_vote() {
             wp_die('Neplatný nonce.');
         }
 
-        global $wpdb;
-        $table = $wpdb->prefix . self::TABLE;
-
-        $rows = $wpdb->get_results($wpdb->prepare(
-            "SELECT user_id, choice, cast_at FROM $table WHERE vote_post_id=%d ORDER BY cast_at ASC",
-            $vote_post_id
-        ), ARRAY_A);
+        $rows = class_exists('Spolek_Votes') ? Spolek_Votes::export_rows($vote_post_id) : [];
 
         $filename = 'hlasovani-' . $vote_post_id . '-hlasy.csv';
 

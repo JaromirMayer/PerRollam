@@ -1,8 +1,6 @@
 <?php
 
-if (!defined('ABSPATH')) {
-    exit;
-}
+if (!defined('ABSPATH')) exit;
 
 class Spolek_Hlasovani_MVP {
     const CPT = 'spolek_hlasovani';
@@ -22,6 +20,12 @@ class Spolek_Hlasovani_MVP {
     const META_CLOSE_NEXT_RETRY  = '_spolek_close_next_retry_at';
     const CLOSE_MAX_ATTEMPTS     = 5;
 
+    // 4.2 – Archiv
+    const META_ARCHIVE_FILE   = '_spolek_archive_file';
+    const META_ARCHIVE_SHA256 = '_spolek_archive_sha256';
+    const META_ARCHIVED_AT    = '_spolek_archived_at';
+    const META_ARCHIVE_ERROR  = '_spolek_archive_error';
+
     public static function init() {
         add_action('init', [__CLASS__, 'register_cpt']);
         add_action('init', [__CLASS__, 'register_shortcodes']);
@@ -30,6 +34,10 @@ class Spolek_Hlasovani_MVP {
         add_action('admin_post_spolek_create_vote', [__CLASS__, 'handle_create_vote']);
         add_action('admin_post_spolek_cast_vote', [__CLASS__, 'handle_cast_vote']);
         add_action('admin_post_spolek_export_csv', [__CLASS__, 'handle_export_csv']);
+        // 4.2 – Archiv
+        add_action('admin_post_spolek_archive_vote', [__CLASS__, 'handle_archive_vote']);
+        add_action('admin_post_spolek_download_archive', [__CLASS__, 'handle_download_archive']);
+        add_action('admin_post_spolek_purge_vote', [__CLASS__, 'handle_purge_vote']);
         add_action('admin_post_spolek_download_pdf', [__CLASS__, 'handle_download_pdf']);
         add_action('admin_post_spolek_member_pdf', [__CLASS__, 'handle_member_pdf']);
         add_action('admin_post_nopriv_spolek_member_pdf', [__CLASS__, 'handle_member_pdf']);
@@ -133,12 +141,7 @@ public static function handle_cron_reminder($vote_post_id, $type) {
 }
 
     public static function activate() {
-        
-        if (class_exists('Spolek_Votes') && method_exists('Spolek_Votes', 'install_table')) {
-    Spolek_Votes::install_table();
-} else {
-    // fallback: tvůj původní dbDelta SQL
-    global $wpdb;
+        global $wpdb;
         $table = $wpdb->prefix . self::TABLE;
         $charset_collate = $wpdb->get_charset_collate();
 
@@ -157,8 +160,7 @@ public static function handle_cron_reminder($vote_post_id, $type) {
             KEY idx_user (user_id)
         ) $charset_collate;";
         dbDelta($sql);
-}
-
+        
         // mail log tabulka (idempotence pro wp_mail)
             if (class_exists('Spolek_Mailer')) {
             Spolek_Mailer::install_table();
@@ -454,9 +456,7 @@ public static function get_members() {
 }
 
 public static function send_member_mail($vote_post_id, $u, $type, $subject, $body, $attachments = []) {
-    if (!class_exists('Spolek_Mailer')) {
-        return 'mailer_missing';
-    }
+    // kompatibilní wrapper – logika je ve Spolek_Mailer
     return Spolek_Mailer::send_member_mail((int)$vote_post_id, $u, (string)$type, (string)$subject, (string)$body, (array)$attachments);
 }
 
@@ -498,10 +498,14 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
     }
 
     public static function user_has_voted(int $vote_post_id, int $user_id) : bool {
-    return class_exists('Spolek_Votes')
-        ? Spolek_Votes::has_user_voted($vote_post_id, $user_id)
-        : false;
-}
+        global $wpdb;
+        $table = $wpdb->prefix . self::TABLE;
+        $exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM $table WHERE vote_post_id=%d AND user_id=%d LIMIT 1",
+            $vote_post_id, $user_id
+        ));
+        return !empty($exists);
+    }
 
     public static function render_portal() {
         if (!is_user_logged_in()) {
@@ -509,6 +513,7 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
         }
 
         $out = '';
+        $assets = self::portal_assets();
 
         // Detail?
         $vote_id = (int) get_query_var('spolek_vote');
@@ -518,18 +523,55 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
         if ($vote_id) {
             $out .= self::render_detail($vote_id);
             $out .= '<p><a href="' . esc_url(self::portal_url()) . '">← Zpět na seznam</a></p>';
-            return $out;
+            return '<div class="spolek-portal">' . $assets . $out . '</div>';
         }
 
-        // Správce: formulář pro nové hlasování
+        // Správce: formulář pro nové hlasování (ponecháme nahoře)
         if (self::is_manager()) {
             $out .= self::render_create_form();
-            $out .= '<hr>';
+            $out .= self::render_section_sep();
         }
 
-        // Seznam hlasování
+        // 1) Aktuální hlasování
         $out .= self::render_list();
-        return $out;
+
+        if (self::is_manager()) {
+            // 2) Archiv uzavřených hlasování
+            $out .= self::render_section_sep();
+            $out .= self::render_archive_panel();
+
+            // 3) Archivní ZIP soubory po smazání z DB
+            $out .= self::render_section_sep();
+            $out .= self::render_purged_archives_panel();
+        } else {
+            // Uzavřená hlasování (pro členy – jen pro čtení)
+            $out .= self::render_section_sep();
+            $out .= self::render_closed_list();
+        }
+
+        return '<div class="spolek-portal">' . $assets . $out . '</div>';
+    }
+
+    /** Vizuální helpery portálu (oddělovače sekcí). */
+    private static function portal_assets(): string {
+        return '<style>
+            .spolek-portal .spolek-section-sep{border:0;border-top:1px solid var(--spolek-accent,#2271b1);margin:14px 0;}
+        </style>
+        <script>
+        document.addEventListener("DOMContentLoaded", function(){
+            try {
+                var root = document.documentElement;
+                var btn = document.querySelector(".spolek-portal button, .spolek-portal .button");
+                if (!btn) return;
+                var c = window.getComputedStyle(btn).backgroundColor;
+                if (c) root.style.setProperty("--spolek-accent", c);
+            } catch(e) {}
+        });
+        </script>';
+    }
+
+    private static function render_section_sep(): string {
+        return '<hr class="spolek-section-sep">';
     }
 
     private static function portal_url() : string {
@@ -610,15 +652,25 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
     }
 
     private static function render_list() : string {
+        $now = time();
         $q = new WP_Query([
             'post_type' => self::CPT,
             'post_status' => 'publish',
             'posts_per_page' => 50,
-            'orderby' => 'date',
-            'order' => 'DESC',
+            'orderby' => 'meta_value_num',
+            'meta_key' => '_spolek_end_ts',
+            'order' => 'ASC',
+            'meta_query' => [
+                [
+                    'key'     => '_spolek_end_ts',
+                    'value'   => $now,
+                    'compare' => '>=',
+                    'type'    => 'NUMERIC',
+                ],
+            ],
         ]);
 
-        $html = '<h2>Hlasování</h2>';
+        $html = '<h2>Aktuální hlasování</h2>';
         if (!$q->have_posts()) {
             return $html . '<p>Zatím není vyhlášeno žádné hlasování.</p>';
         }
@@ -642,6 +694,242 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
         }
         wp_reset_postdata();
         $html .= '</ul>';
+
+        return $html;
+    }
+
+    /**
+     * 4.2 – Archiv uzavřených hlasování (jen pro správce).
+     * - "Zálohovat" vytvoří ZIP do uploads/spolek-hlasovani-archiv/
+     * - "Stáhnout archiv" stáhne ZIP
+     * - "Smazat z DB" smaže CPT + hlasy + mail log + audit (ZIP zůstává)
+     */
+    private static function render_archive_panel() : string {
+        if (!self::is_manager()) return '';
+
+        $html = '<h2>Archiv uzavřených hlasování</h2>';
+
+        if (!empty($_GET['archived'])) {
+            $html .= '<p><strong>Archiv byl vytvořen.</strong></p>';
+        }
+        if (!empty($_GET['purged'])) {
+            $html .= '<p><strong>Hlasování bylo smazáno z databáze (archivní ZIP zůstal uložen).</strong></p>';
+        }
+
+        if (!class_exists('Spolek_Archive')) {
+            return $html . '<p style="color:#b00;">Chybí třída Spolek_Archive (soubor include). Archivace není dostupná.</p>';
+        }
+
+        Spolek_Archive::ensure_storage();
+
+        $now = time();
+
+        $q = new WP_Query([
+            'post_type'      => self::CPT,
+            'post_status'    => 'publish',
+            'posts_per_page' => 50,
+            'orderby'        => 'meta_value_num',
+            'meta_key'       => '_spolek_end_ts',
+            'order'          => 'DESC',
+            'meta_query'     => [
+                [
+                    'key'     => '_spolek_end_ts',
+                    'value'   => $now,
+                    'compare' => '<',
+                    'type'    => 'NUMERIC',
+                ],
+            ],
+        ]);
+
+        if (!$q->have_posts()) {
+            $html .= '<p>Zatím nejsou žádná ukončená hlasování.</p>';
+        } else {
+            $html .= '<table style="width:100%;border-collapse:collapse;">';
+            $html .= '<thead><tr>'
+                . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Hlasování</th>'
+                . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Ukončeno</th>'
+                . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Zpracováno</th>'
+                . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Archiv</th>'
+                . '</tr></thead><tbody>';
+
+            while ($q->have_posts()) {
+                $q->the_post();
+                $id = get_the_ID();
+                [$start_ts, $end_ts] = self::get_vote_meta($id);
+
+                $processed_at = (string) get_post_meta($id, self::META_CLOSE_PROCESSED_AT, true);
+                $file = (string) get_post_meta($id, self::META_ARCHIVE_FILE, true);
+                $sha  = (string) get_post_meta($id, self::META_ARCHIVE_SHA256, true);
+                $err  = (string) get_post_meta($id, self::META_ARCHIVE_ERROR, true);
+
+                $end_label = $end_ts ? wp_date('j.n.Y H:i', (int)$end_ts, wp_timezone()) : '–';
+                $proc_label = $processed_at ? wp_date('j.n.Y H:i', (int)$processed_at, wp_timezone()) : '–';
+
+                $detail_link = add_query_arg('spolek_vote', $id, self::portal_url());
+
+                $html .= '<tr>';
+                $html .= '<td style="border-bottom:1px solid #eee;padding:6px;">'
+                    . '<a href="'.esc_url($detail_link).'">'.esc_html(get_the_title()).'</a>'
+                    . '</td>';
+                $html .= '<td style="border-bottom:1px solid #eee;padding:6px;">'.esc_html($end_label).'</td>';
+                $html .= '<td style="border-bottom:1px solid #eee;padding:6px;">'.esc_html($proc_label).'</td>';
+
+                $html .= '<td style="border-bottom:1px solid #eee;padding:6px;">';
+
+                // pokud ještě není uzávěrka hotová, nearchivujeme
+                if (!$processed_at) {
+                    $html .= '<span style="opacity:.8;">Čeká na uzávěrku (cron).</span>';
+                } else {
+                    $has_file = false;
+                    $file = basename($file);
+                    if ($file !== '') {
+                        $item = Spolek_Archive::find_by_file($file);
+                        $path = (wp_upload_dir()['basedir'] ?? '') . '/' . Spolek_Archive::DIR_SLUG . '/' . $file;
+                        if ($item || ($path && file_exists($path))) $has_file = true;
+                    }
+
+                    if ($has_file) {
+                        $dl = admin_url('admin-post.php');
+                        $dl = add_query_arg([
+                            'action' => 'spolek_download_archive',
+                            'file'   => $file,
+                            '_nonce' => wp_create_nonce('spolek_download_archive_' . $file),
+                        ], $dl);
+
+                        $purge_action = esc_url(admin_url('admin-post.php'));
+
+                        $html .= '<a class="button" href="'.esc_url($dl).'">Stáhnout archiv ZIP</a> ';
+
+                        $html .= '<form method="post" action="'.$purge_action.'" style="display:inline-block;margin-left:8px;" onsubmit="return confirm(\'Opravdu smazat hlasování #' . (int)$id . ' z databáze? Archivní ZIP zůstane uložen.\');">';
+                        $html .= '<input type="hidden" name="action" value="spolek_purge_vote">';
+                        $html .= '<input type="hidden" name="vote_post_id" value="'.(int)$id.'">';
+                        $html .= wp_nonce_field('spolek_purge_vote_'.$id, '_nonce', true, false);
+                        $html .= '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">';
+                        $html .= '<button type="submit">Smazat z DB</button>';
+                        $html .= '</form>';
+
+                        if ($sha) {
+                            $html .= '<div style="margin-top:4px;opacity:.75;font-size:12px;">SHA256: '.esc_html($sha).'</div>';
+                        }
+                    } else {
+                        // vytvořit archiv
+                        $archive_action = esc_url(admin_url('admin-post.php'));
+                        $html .= '<form method="post" action="'.$archive_action.'" style="display:inline-block;">';
+                        $html .= '<input type="hidden" name="action" value="spolek_archive_vote">';
+                        $html .= '<input type="hidden" name="vote_post_id" value="'.(int)$id.'">';
+                        $html .= wp_nonce_field('spolek_archive_vote_'.$id, '_nonce', true, false);
+                        $html .= '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">';
+                        $html .= '<button type="submit">Zálohovat nyní</button>';
+                        $html .= '</form>';
+
+                        if ($err) {
+                            $html .= '<div style="margin-top:4px;color:#b00;font-size:12px;">Chyba archivace: '.esc_html($err).'</div>';
+                        } else {
+                            $html .= '<div style="margin-top:4px;opacity:.75;font-size:12px;">Automaticky se pokusí vytvořit i cron po uzávěrce.</div>';
+                        }
+                    }
+                }
+
+                $html .= '</td>';
+                $html .= '</tr>';
+            }
+            wp_reset_postdata();
+
+            $html .= '</tbody></table>';
+        }
+
+        return $html;
+    }
+
+    /** 4.2 – Sekce 3: Archivní ZIP soubory, po smazání z DB (jen pro správce). */
+    private static function render_purged_archives_panel(): string {
+        if (!self::is_manager()) return '';
+
+        $html = '<h2>Archivní ZIP soubory, po smazání z DB</h2>';
+
+        if (!class_exists('Spolek_Archive')) {
+            return $html . '<p style="color:#b00;">Chybí třída Spolek_Archive (soubor include). Archivace není dostupná.</p>';
+        }
+
+        Spolek_Archive::ensure_storage();
+
+        $items = Spolek_Archive::list_archives();
+        $purged = array_filter($items, function($it){ return !empty($it['purged_at']); });
+
+        if (!$purged) {
+            $html .= '<p style="opacity:.8;">Zatím žádné.</p>';
+            return $html;
+        }
+
+        $html .= '<ul>';
+        foreach ($purged as $it) {
+            $file = basename((string)($it['file'] ?? ''));
+            if ($file === '') continue;
+
+            $dl = admin_url('admin-post.php');
+            $dl = add_query_arg([
+                'action' => 'spolek_download_archive',
+                'file'   => $file,
+                '_nonce' => wp_create_nonce('spolek_download_archive_' . $file),
+            ], $dl);
+
+            $title = (string)($it['title'] ?? $file);
+            $archived_at = (int)($it['archived_at'] ?? 0);
+            $purged_at   = (int)($it['purged_at'] ?? 0);
+
+            $html .= '<li>'
+                . '<a href="'.esc_url($dl).'">'.esc_html($title).'</a>'
+                . ' <span style="opacity:.75;">(archiv: '.esc_html($archived_at ? wp_date('j.n.Y H:i', $archived_at, wp_timezone()) : '–')
+                . ', smazáno z DB: '.esc_html($purged_at ? wp_date('j.n.Y H:i', $purged_at, wp_timezone()) : '–')
+                . ')</span>'
+                . '</li>';
+        }
+        $html .= '</ul>';
+
+        return $html;
+    }
+
+    /** Uzavřená hlasování – jen seznam pro členy (bez správcovských akcí). */
+    private static function render_closed_list() : string {
+        $now = time();
+
+        $q = new WP_Query([
+            'post_type'      => self::CPT,
+            'post_status'    => 'publish',
+            'posts_per_page' => 20,
+            'orderby'        => 'meta_value_num',
+            'meta_key'       => '_spolek_end_ts',
+            'order'          => 'DESC',
+            'meta_query'     => [
+                [
+                    'key'     => '_spolek_end_ts',
+                    'value'   => $now,
+                    'compare' => '<',
+                    'type'    => 'NUMERIC',
+                ],
+            ],
+        ]);
+
+        if (!$q->have_posts()) return '';
+
+        $html  = '<details style="margin-top:18px;">';
+        $html .= '<summary><strong>Ukončená hlasování (archiv, jen pro čtení)</strong></summary>';
+        $html .= '<ul style="margin-top:10px;">';
+
+        while ($q->have_posts()) {
+            $q->the_post();
+            $id = get_the_ID();
+            [$start_ts, $end_ts] = self::get_vote_meta($id);
+
+            $link = add_query_arg('spolek_vote', $id, self::portal_url());
+
+            $end_label = $end_ts ? wp_date('j.n.Y H:i', (int)$end_ts, wp_timezone()) : '–';
+            $html .= '<li><a href="'.esc_url($link).'">' . esc_html(get_the_title()) . '</a>'
+                . ' <span style="opacity:.75;">(ukončeno '.$end_label.')</span></li>';
+        }
+
+        wp_reset_postdata();
+        $html .= '</ul></details>';
 
         return $html;
     }
@@ -713,38 +1001,49 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
         return $html;
     }
 
- private static function render_manager_tools(int $vote_post_id) : string {
+    private static function render_manager_tools(int $vote_post_id) : string {
+        global $wpdb;
+        $table = $wpdb->prefix . self::TABLE;
 
-    $map = class_exists('Spolek_Votes')
-        ? Spolek_Votes::get_counts($vote_post_id)
-        : ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
+        $counts = $wpdb->get_results($wpdb->prepare(
+            "SELECT choice, COUNT(*) as c FROM $table WHERE vote_post_id=%d GROUP BY choice",
+            $vote_post_id
+        ), ARRAY_A);
 
-    $action = esc_url(admin_url('admin-post.php'));
-    $html  = '<h3>Správa (jen pro správce)</h3>';
-    $html .= '<p><strong>Souhrn:</strong> ANO: '.$map['ANO'].' | NE: '.$map['NE'].' | ZDRŽEL: '.$map['ZDRZEL'].'</p>';
+        $map = ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
+        foreach ($counts as $row) {
+            $ch = $row['choice'];
+            if (isset($map[$ch])) $map[$ch] = (int)$row['c'];
+        }
 
-    $html .= '<form method="post" action="'.$action.'">';
-    $html .= '<input type="hidden" name="action" value="spolek_export_csv">';
-    $html .= '<input type="hidden" name="vote_post_id" value="'.(int)$vote_post_id.'">';
-    $html .= wp_nonce_field('spolek_export_csv_'.$vote_post_id, '_nonce', true, false);
-    $html .= '<button type="submit">Stáhnout CSV (hlasy)</button>';
-    $html .= '</form>';
+        $action = esc_url(admin_url('admin-post.php'));
+        $html  = '<h3>Správa (jen pro správce)</h3>';
+        $html .= '<p><strong>Souhrn:</strong> ANO: '.$map['ANO'].' | NE: '.$map['NE'].' | ZDRŽEL: '.$map['ZDRZEL'].'</p>';
 
-    $pdf_path = (string) get_post_meta($vote_post_id, '_spolek_pdf_path', true);
-    if ($pdf_path && file_exists($pdf_path)) {
+        $html .= '<form method="post" action="'.$action.'">';
+        $html .= '<input type="hidden" name="action" value="spolek_export_csv">';
+        $html .= '<input type="hidden" name="vote_post_id" value="'.(int)$vote_post_id.'">';
+        $html .= wp_nonce_field('spolek_export_csv_'.$vote_post_id, '_nonce', true, false);
+        $html .= '<button type="submit">Stáhnout CSV (hlasy)</button>';
+        $html .= '</form>';
+
+        $pdf_path = (string) get_post_meta($vote_post_id, '_spolek_pdf_path', true);
+            if ($pdf_path && file_exists($pdf_path)) {
+        $dl = admin_url('admin-post.php');
         $dl = add_query_arg([
-            'action'        => 'spolek_download_pdf',
-            'vote_post_id'  => (int)$vote_post_id,
-            '_nonce'        => wp_create_nonce('spolek_download_pdf_'.$vote_post_id),
-        ], admin_url('admin-post.php'));
+        'action'        => 'spolek_download_pdf',
+        'vote_post_id'  => (int)$vote_post_id,
+        '_nonce'        => wp_create_nonce('spolek_download_pdf_'.$vote_post_id),
+    ], $dl);
 
         $html .= '<p><a class="button" href="'.esc_url($dl).'">Stáhnout zápis PDF</a></p>';
     } else {
         $html .= '<p style="opacity:.8;">Zápis PDF zatím není vygenerován (vygeneruje se po ukončení hlasování).</p>';
     }
 
-    return $html;
-}
+        return $html;
+
+ }
 
     public static function handle_create_vote() {
         if (!is_user_logged_in() || !self::is_manager()) {
@@ -895,18 +1194,29 @@ public static function handle_cast_vote() {
         self::redirect_detail_error($vote_post_id, 'Už jste hlasoval(a).');
     }
 
-    $ok = class_exists('Spolek_Votes')
-    ? Spolek_Votes::insert_vote($vote_post_id, $user_id, $choice)
-    : false;
-
-if (!$ok) {
+    // uložení hlasu
     global $wpdb;
-    Spolek_Audit::log($vote_post_id, $user_id, 'vote_cast_failed', [
-        'reason'   => 'db_insert_failed',
-        'db_error' => $wpdb->last_error ?: null,
-    ]);
-    self::redirect_detail_error($vote_post_id, 'Nelze uložit hlas (možná duplicitní).');
-}
+    $table = $wpdb->prefix . self::TABLE;
+
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+    $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+
+    $ok = $wpdb->insert($table, [
+        'vote_post_id' => $vote_post_id,
+        'user_id'      => $user_id,
+        'choice'       => $choice,
+        'cast_at'      => current_time('mysql'),
+        'ip_hash'      => $ip ? hash('sha256', $ip) : null,
+        'ua_hash'      => $ua ? hash('sha256', $ua) : null,
+    ], ['%d','%d','%s','%s','%s','%s']);
+
+    if (!$ok) {
+        Spolek_Audit::log($vote_post_id, $user_id, 'vote_cast_failed', [
+            'reason'   => 'db_insert_failed',
+            'db_error' => $wpdb->last_error ?: null,
+        ]);
+        self::redirect_detail_error($vote_post_id, 'Nelze uložit hlas (možná duplicitní).');
+    }
 
     // audit: hlas uložen
     Spolek_Audit::log($vote_post_id, $user_id, 'vote_cast_saved', [
@@ -929,7 +1239,13 @@ if (!$ok) {
             wp_die('Neplatný nonce.');
         }
 
-        $rows = class_exists('Spolek_Votes') ? Spolek_Votes::export_rows($vote_post_id) : [];
+        global $wpdb;
+        $table = $wpdb->prefix . self::TABLE;
+
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT user_id, choice, cast_at FROM $table WHERE vote_post_id=%d ORDER BY cast_at ASC",
+            $vote_post_id
+        ), ARRAY_A);
 
         $filename = 'hlasovani-' . $vote_post_id . '-hlasy.csv';
 
@@ -959,6 +1275,98 @@ if (!$ok) {
 /**
  * Uvolní lock jen pokud token sedí (bezpečné při expiraci/novém locku).
  */
+
+
+    // ===== 4.2 Archiv – handlery =====
+
+    public static function handle_archive_vote() : void {
+        if (!is_user_logged_in() || !self::is_manager()) {
+            wp_die('Nemáte oprávnění.');
+        }
+
+        $vote_post_id = (int)($_POST['vote_post_id'] ?? 0);
+        if (!$vote_post_id) wp_die('Neplatné hlasování.');
+
+        if (!isset($_POST['_nonce']) || !wp_verify_nonce($_POST['_nonce'], 'spolek_archive_vote_'.$vote_post_id)) {
+            wp_die('Neplatný nonce.');
+        }
+
+        $return_to = self::get_return_to(home_url('/clenove/hlasovani/'));
+
+        if (!class_exists('Spolek_Archive')) {
+            wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Archive.'), $return_to));
+            exit;
+        }
+
+        $res = Spolek_Archive::archive_vote($vote_post_id, true);
+
+        if (is_array($res) && !empty($res['ok'])) {
+            wp_safe_redirect(add_query_arg('archived', '1', $return_to));
+            exit;
+        }
+
+        $err = is_array($res) ? (string)($res['error'] ?? 'Archivace selhala') : 'Archivace selhala';
+        wp_safe_redirect(add_query_arg('err', rawurlencode($err), $return_to));
+        exit;
+    }
+
+    public static function handle_download_archive() : void {
+        if (!is_user_logged_in() || !self::is_manager()) {
+            wp_die('Nemáte oprávnění.');
+        }
+
+        $file = (string)($_GET['file'] ?? '');
+        $vote_post_id = (int)($_GET['vote_post_id'] ?? 0);
+
+        if ($file === '' && $vote_post_id) {
+            $file = (string) get_post_meta($vote_post_id, self::META_ARCHIVE_FILE, true);
+        }
+        $file = basename((string)$file);
+
+        if ($file === '') wp_die('Neplatný soubor.');
+
+        $nonce = (string)($_GET['_nonce'] ?? '');
+        if (!$nonce || !wp_verify_nonce($nonce, 'spolek_download_archive_' . $file)) {
+            wp_die('Neplatný nonce.');
+        }
+
+        if (!class_exists('Spolek_Archive')) {
+            wp_die('Chybí Spolek_Archive.');
+        }
+
+        Spolek_Archive::send_archive($file);
+    }
+
+    public static function handle_purge_vote() : void {
+        if (!is_user_logged_in() || !self::is_manager()) {
+            wp_die('Nemáte oprávnění.');
+        }
+
+        $vote_post_id = (int)($_POST['vote_post_id'] ?? 0);
+        if (!$vote_post_id) wp_die('Neplatné hlasování.');
+
+        if (!isset($_POST['_nonce']) || !wp_verify_nonce($_POST['_nonce'], 'spolek_purge_vote_'.$vote_post_id)) {
+            wp_die('Neplatný nonce.');
+        }
+
+        $return_to = self::get_return_to(home_url('/clenove/hlasovani/'));
+
+        if (!class_exists('Spolek_Archive')) {
+            wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Archive.'), $return_to));
+            exit;
+        }
+
+        $res = Spolek_Archive::purge_vote($vote_post_id);
+
+        if (is_array($res) && !empty($res['ok'])) {
+            wp_safe_redirect(add_query_arg('purged', '1', $return_to));
+            exit;
+        }
+
+        $err = is_array($res) ? (string)($res['error'] ?? 'Purge selhal') : 'Purge selhal';
+        wp_safe_redirect(add_query_arg('err', rawurlencode($err), $return_to));
+        exit;
+    }
 
     private static function redirect_with_error(string $msg) {
         wp_safe_redirect(add_query_arg('err', rawurlencode($msg), self::portal_url()));

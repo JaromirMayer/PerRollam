@@ -3,13 +3,20 @@ if (!defined('ABSPATH')) exit;
 
 final class Spolek_Cron {
 
-    public const HOOK_CLOSE    = 'spolek_vote_close';
-    public const HOOK_REMINDER = 'spolek_vote_reminder';
+    public const HOOK_CLOSE        = 'spolek_vote_close';
+    public const HOOK_REMINDER     = 'spolek_vote_reminder';
+    public const HOOK_ARCHIVE_SCAN = 'spolek_archive_scan';
 
     public function register(): void {
         // Cron hooky – delegujeme do legacy
         add_action(self::HOOK_REMINDER, [$this, 'handle_reminder'], 10, 2);
         add_action(self::HOOK_CLOSE, [$this, 'handle_close'], 10, 1);
+
+        // 4.2 – dohánění archivace (1× za hodinu)
+        add_action(self::HOOK_ARCHIVE_SCAN, [__CLASS__, 'archive_scan']);
+        if (!wp_next_scheduled(self::HOOK_ARCHIVE_SCAN)) {
+            wp_schedule_event(time() + 300, 'hourly', self::HOOK_ARCHIVE_SCAN);
+        }
     }
 
     public function handle_reminder($vote_post_id, $type): void {
@@ -48,6 +55,59 @@ final class Spolek_Cron {
         wp_clear_scheduled_hook(self::HOOK_CLOSE, [$post_id]);
         wp_clear_scheduled_hook(self::HOOK_REMINDER, [$post_id, 'reminder48']);
         wp_clear_scheduled_hook(self::HOOK_REMINDER, [$post_id, 'reminder24']);
+    }
+
+
+    /**
+     * 4.2 – Cron scan: archivuje uzavřená a zpracovaná hlasování, která ještě nemají ZIP.
+     * Běží 1× za hodinu, ale zpracuje max 10 položek (aby to nebylo těžké).
+     */
+    public static function archive_scan(): void {
+        if (!class_exists('Spolek_Archive') || !class_exists('Spolek_Hlasovani_MVP')) return;
+
+        $now = time();
+        $q = new WP_Query([
+            'post_type'      => Spolek_Hlasovani_MVP::CPT,
+            'post_status'    => 'publish',
+            'posts_per_page' => 10,
+            'orderby'        => 'meta_value_num',
+            'meta_key'       => Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT,
+            'order'          => 'ASC',
+            'meta_query'     => [
+                [
+                    'key'     => '_spolek_end_ts',
+                    'value'   => $now,
+                    'compare' => '<',
+                    'type'    => 'NUMERIC',
+                ],
+                [
+                    'key'     => Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT,
+                    'compare' => 'EXISTS',
+                ],
+                [
+                    'key'     => Spolek_Archive::META_ARCHIVE_FILE,
+                    'compare' => 'NOT EXISTS',
+                ],
+            ],
+        ]);
+
+        if (!$q->have_posts()) return;
+
+        Spolek_Archive::ensure_storage();
+
+        while ($q->have_posts()) {
+            $q->the_post();
+            $id = (int) get_the_ID();
+
+            $res = Spolek_Archive::archive_vote($id, false);
+            if (class_exists('Spolek_Audit')) {
+                Spolek_Audit::log($id, null, 'archive_scan_attempt', [
+                    'ok'    => (bool)($res['ok'] ?? false),
+                    'error' => (string)($res['error'] ?? ''),
+                ]);
+            }
+        }
+        wp_reset_postdata();
     }
     
     // ===== Lock + retry (přesun z legacy) =====
@@ -207,9 +267,19 @@ final class Spolek_Cron {
         update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_ATTEMPTS, (string)$attempt);
         update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_STARTED_AT, (string) time());
 
-        $map = class_exists('Spolek_Votes')
-    ? Spolek_Votes::get_counts($vote_post_id)
-    : ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
+        global $wpdb;
+        $table = $wpdb->prefix . Spolek_Hlasovani_MVP::TABLE;
+
+        $counts = $wpdb->get_results($wpdb->prepare(
+            "SELECT choice, COUNT(*) as c FROM $table WHERE vote_post_id=%d GROUP BY choice",
+            $vote_post_id
+        ), ARRAY_A);
+
+        $map = ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
+        foreach ($counts as $row) {
+            $ch = $row['choice'];
+            if (isset($map[$ch])) $map[$ch] = (int)$row['c'];
+        }
 
         $eval = Spolek_Hlasovani_MVP::evaluate_vote($vote_post_id, $map);
 
@@ -301,6 +371,20 @@ final class Spolek_Cron {
         }
 
         update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT, (string) time());
+
+        // 4.2 – Archiv (best-effort, bez blokování uzávěrky)
+        if (class_exists('Spolek_Archive')) {
+            $res = Spolek_Archive::archive_vote($vote_post_id, false);
+            if (!(is_array($res) && !empty($res['ok']))) {
+                $err = is_array($res) ? (string)($res['error'] ?? 'archive_failed') : 'archive_failed';
+                if (class_exists('Spolek_Audit')) {
+                    Spolek_Audit::log($vote_post_id, null, 'archive_auto_failed', [
+                        'error' => $err,
+                    ]);
+                }
+            }
+        }
+
         delete_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_STARTED_AT);
         delete_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_LAST_ERROR);
         delete_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_NEXT_RETRY);
