@@ -5,23 +5,28 @@
  * Version: 0.1.0
  */
 
-if (!defined('ABSPATH')) exit;
+defined('ABSPATH') || exit;
 
-// Jednotné konstanty pro celý plugin
-if (!defined('SPOLEK_HLASOVANI_PATH')) {
-    define('SPOLEK_HLASOVANI_PATH', plugin_dir_path(__FILE__));
-}
-if (!defined('SPOLEK_HLASOVANI_FILE')) {
-    define('SPOLEK_HLASOVANI_FILE', __FILE__);
+// === Konstanty pluginu (používají je include třídy) ===
+define('SPOLEK_HLASOVANI_VERSION', '0.1.0');
+define('SPOLEK_HLASOVANI_FILE', __FILE__);
+define('SPOLEK_HLASOVANI_PATH', plugin_dir_path(__FILE__));
+define('SPOLEK_HLASOVANI_URL', plugin_dir_url(__FILE__));
+define('SPOLEK_HLASOVANI_BASENAME', plugin_basename(__FILE__));
+
+// === Composer autoload (DOMPDF apod.) ===
+$autoload = SPOLEK_HLASOVANI_PATH . 'vendor/autoload.php';
+if (file_exists($autoload)) {
+    require_once $autoload;
 }
 
-// Načti jen kabeláž (ne audit/legacy přímo)
+// === Bootstrap pluginu ===
 require_once SPOLEK_HLASOVANI_PATH . 'includes/class-spolek-plugin.php';
 
-// Spusť plugin (registruje shortcode na init atd.)
+// Aktivace (tvorba tabulek, capability, …)
+register_activation_hook(__FILE__, ['Spolek_Plugin', 'activate']);
+
+// Běh pluginu
 add_action('plugins_loaded', function () {
     Spolek_Plugin::instance()->run();
-});
-
-// Aktivace
-register_activation_hook(SPOLEK_HLASOVANI_FILE, ['Spolek_Plugin', 'activate']);
+}, 0);
