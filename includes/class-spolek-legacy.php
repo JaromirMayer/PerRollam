@@ -38,6 +38,7 @@ class Spolek_Hlasovani_MVP {
         add_action('admin_post_spolek_archive_vote', [__CLASS__, 'handle_archive_vote']);
         add_action('admin_post_spolek_download_archive', [__CLASS__, 'handle_download_archive']);
         add_action('admin_post_spolek_purge_vote', [__CLASS__, 'handle_purge_vote']);
+        add_action('admin_post_spolek_run_purge_scan', [__CLASS__, 'handle_run_purge_scan']);
         add_action('admin_post_spolek_download_pdf', [__CLASS__, 'handle_download_pdf']);
         add_action('admin_post_spolek_member_pdf', [__CLASS__, 'handle_member_pdf']);
         add_action('admin_post_nopriv_spolek_member_pdf', [__CLASS__, 'handle_member_pdf']);
@@ -576,7 +577,7 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
 
     private static function portal_url() : string {
         // aktuální URL stránky bez query
-        return remove_query_arg(['spolek_vote','created','voted','err','export'], home_url(add_query_arg([])));
+        return remove_query_arg(['spolek_vote','created','voted','err','export','archived','purged','purge_scan','purge_scan_purged'], home_url(add_query_arg([])));
     }
 
     private static function render_create_form() : string {
@@ -846,6 +847,25 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
         if (!self::is_manager()) return '';
 
         $html = '<h2>Archivní ZIP soubory, po smazání z DB</h2>';
+
+// Ruční spuštění purge scanu (4.3) – pro test / okamžité pročištění (maže i audit)
+$purged_n = isset($_GET['purge_scan_purged']) ? (int)$_GET['purge_scan_purged'] : null;
+if (!empty($_GET['purge_scan'])) {
+    if ($purged_n !== null) {
+        $html .= '<p><strong>Purge scan dokončen.</strong> Smazáno z DB: ' . (int)$purged_n . '.</p>';
+    } else {
+        $html .= '<p><strong>Purge scan dokončen.</strong></p>';
+    }
+}
+
+$run_action = esc_url(admin_url('admin-post.php'));
+$html .= '<form method="post" action="'.$run_action.'" style="margin:8px 0 12px 0;">'
+    . '<input type="hidden" name="action" value="spolek_run_purge_scan">'
+    . wp_nonce_field('spolek_run_purge_scan', '_nonce', true, false)
+    . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
+    . '<button type="submit">Spustit automatické mazání (30 dní)</button>'
+    . '<div style="margin-top:6px;opacity:.75;font-size:12px;">Smaže max 10 hlasování, která jsou uzavřená déle než 30 dní a mají archivní ZIP (ověří SHA256). Maže i audit.</div>'
+    . '</form>';
 
         if (!class_exists('Spolek_Archive')) {
             return $html . '<p style="color:#b00;">Chybí třída Spolek_Archive (soubor include). Archivace není dostupná.</p>';
@@ -1367,6 +1387,63 @@ public static function handle_cast_vote() {
         wp_safe_redirect(add_query_arg('err', rawurlencode($err), $return_to));
         exit;
     }
+
+public static function handle_run_purge_scan() : void {
+    if (!is_user_logged_in() || !self::is_manager()) {
+        wp_die('Nemáte oprávnění.');
+    }
+
+    if (!isset($_POST['_nonce']) || !wp_verify_nonce($_POST['_nonce'], 'spolek_run_purge_scan')) {
+        wp_die('Neplatný nonce.');
+    }
+
+    $return_to = self::get_return_to(home_url('/clenove/hlasovani/'));
+
+    if (!class_exists('Spolek_Cron') || !method_exists('Spolek_Cron', 'purge_scan')) {
+        wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Cron::purge_scan.'), $return_to));
+        exit;
+    }
+
+    if (!class_exists('Spolek_Archive')) {
+        wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Archive.'), $return_to));
+        exit;
+    }
+
+    Spolek_Archive::ensure_storage();
+
+    $before = 0;
+    try {
+        $items = Spolek_Archive::list_archives();
+        $before = count(array_filter($items, function($it){ return !empty($it['purged_at']); }));
+    } catch (Throwable $e) {
+        $before = 0;
+    }
+
+    try {
+        Spolek_Cron::purge_scan();
+    } catch (Throwable $e) {
+        wp_safe_redirect(add_query_arg('err', rawurlencode('Purge scan selhal: ' . $e->getMessage()), $return_to));
+        exit;
+    }
+
+    $after = $before;
+    try {
+        $items = Spolek_Archive::list_archives();
+        $after = count(array_filter($items, function($it){ return !empty($it['purged_at']); }));
+    } catch (Throwable $e) {
+        $after = $before;
+    }
+
+    $delta = max(0, (int)$after - (int)$before);
+
+    wp_safe_redirect(add_query_arg([
+        'purge_scan' => '1',
+        'purge_scan_purged' => (string)$delta,
+    ], $return_to));
+    exit;
+}
+
+
 
     private static function redirect_with_error(string $msg) {
         wp_safe_redirect(add_query_arg('err', rawurlencode($msg), self::portal_url()));

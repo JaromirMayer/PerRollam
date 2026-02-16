@@ -6,6 +6,8 @@ final class Spolek_Cron {
     public const HOOK_CLOSE        = 'spolek_vote_close';
     public const HOOK_REMINDER     = 'spolek_vote_reminder';
     public const HOOK_ARCHIVE_SCAN = 'spolek_archive_scan';
+    public const HOOK_PURGE_SCAN   = 'spolek_purge_scan';
+
 
     public function register(): void {
         // Cron hooky – delegujeme do legacy
@@ -17,6 +19,13 @@ final class Spolek_Cron {
         if (!wp_next_scheduled(self::HOOK_ARCHIVE_SCAN)) {
             wp_schedule_event(time() + 300, 'hourly', self::HOOK_ARCHIVE_SCAN);
         }
+
+        // 4.3 – pročištění databáze (1× denně) – maže jen pokud existuje archiv ZIP + sedí SHA256
+        add_action(self::HOOK_PURGE_SCAN, [__CLASS__, 'purge_scan']);
+        if (!wp_next_scheduled(self::HOOK_PURGE_SCAN)) {
+            wp_schedule_event(time() + 600, 'daily', self::HOOK_PURGE_SCAN);
+        }
+
     }
 
     public function handle_reminder($vote_post_id, $type): void {
@@ -110,6 +119,66 @@ final class Spolek_Cron {
         wp_reset_postdata();
     }
     
+
+    /**
+     * 4.3 – Cron scan: smaže z DB uzavřená hlasování starší než 30 dní,
+     * jen pokud existuje archivní ZIP a sedí SHA256 (ověřuje Spolek_Archive::purge_vote()).
+     * Běží 1× denně, max 10 položek na běh.
+     *
+     * @return int Kolik hlasování bylo smazáno z DB (OK).
+     */
+    public static function purge_scan(): int {
+        if (!class_exists('Spolek_Archive') || !class_exists('Spolek_Hlasovani_MVP')) return 0;
+
+        $threshold = time() - (30 * DAY_IN_SECONDS);
+
+        $q = new WP_Query([
+            'post_type'      => Spolek_Hlasovani_MVP::CPT,
+            'post_status'    => 'publish',
+            'posts_per_page' => 10,
+            'orderby'        => 'meta_value_num',
+            'meta_key'       => '_spolek_end_ts',
+            'order'          => 'ASC',
+            'meta_query'     => [
+                [
+                    'key'     => '_spolek_end_ts',
+                    'value'   => $threshold,
+                    'compare' => '<',
+                    'type'    => 'NUMERIC',
+                ],
+                [
+                    'key'     => Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT,
+                    'compare' => 'EXISTS',
+                ],
+                [
+                    'key'     => Spolek_Archive::META_ARCHIVE_FILE,
+                    'compare' => 'EXISTS',
+                ],
+            ],
+        ]);
+
+        if (!$q->have_posts()) return 0;
+
+        $ids = wp_list_pluck($q->posts, 'ID');
+        wp_reset_postdata();
+
+        Spolek_Archive::ensure_storage();
+
+        $purged = 0;
+        foreach ($ids as $id) {
+            $id = (int) $id;
+
+            $res = Spolek_Archive::purge_vote($id);
+
+            if (is_array($res) && !empty($res['ok'])) {
+                $purged++;
+            }
+        }
+
+        return $purged;
+    }
+
+
     // ===== Lock + retry (přesun z legacy) =====
 
     private static function close_lock_key(int $vote_post_id): string {
