@@ -7,6 +7,7 @@ final class Spolek_Cron {
     public const HOOK_REMINDER     = 'spolek_vote_reminder';
     public const HOOK_ARCHIVE_SCAN = 'spolek_archive_scan';
     public const HOOK_PURGE_SCAN   = 'spolek_purge_scan';
+    public const HOOK_CLOSE_SCAN   = 'spolek_close_scan';
 
 
     public function register(): void {
@@ -24,6 +25,12 @@ final class Spolek_Cron {
         add_action(self::HOOK_PURGE_SCAN, [__CLASS__, 'purge_scan']);
         if (!wp_next_scheduled(self::HOOK_PURGE_SCAN)) {
             wp_schedule_event(time() + 600, 'daily', self::HOOK_PURGE_SCAN);
+        }
+
+        // 4.4.2 – dohánění uzávěrek (1× za hodinu)
+        add_action(self::HOOK_CLOSE_SCAN, [__CLASS__, 'close_scan']);
+        if (!wp_next_scheduled(self::HOOK_CLOSE_SCAN)) {
+            wp_schedule_event(time() + 450, 'hourly', self::HOOK_CLOSE_SCAN);
         }
 
     }
@@ -177,6 +184,204 @@ final class Spolek_Cron {
 
         return $purged;
     }
+
+    /**
+     * 4.4.2 – Dohánění uzávěrek pro starší hlasování, která už jsou ukončená,
+     * ale pořád nemají META_CLOSE_PROCESSED_AT (např. kvůli neproběhlému cron jobu).
+     *
+     * - max $limit položek na běh (kvůli zátěži)
+     * - hlasování uzavřená před více než $silent_after_days dny se doženou v tichém režimu (bez rozesílky e-mailů),
+     *   ale výsledek + PDF + archiv ZIP se vytvoří.
+     *
+     * @return array{total:int,silent:int,normal:int,errors:int,ids:array<int>}
+     */
+    public static function close_scan(int $limit = 10, int $silent_after_days = 7): array {
+        if (!class_exists('Spolek_Hlasovani_MVP')) {
+            return ['total'=>0,'silent'=>0,'normal'=>0,'errors'=>0,'ids'=>[]];
+        }
+
+        $now = time();
+        $q = new WP_Query([
+            'post_type'      => Spolek_Hlasovani_MVP::CPT,
+            'post_status'    => 'publish',
+            'posts_per_page' => max(1, (int)$limit),
+            'orderby'        => 'meta_value_num',
+            'meta_key'       => '_spolek_end_ts',
+            'order'          => 'ASC',
+            'meta_query'     => [
+                [
+                    'key'     => '_spolek_end_ts',
+                    'value'   => $now,
+                    'compare' => '<',
+                    'type'    => 'NUMERIC',
+                ],
+                [
+                    'key'     => Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT,
+                    'compare' => 'NOT EXISTS',
+                ],
+            ],
+        ]);
+
+        if (!$q->have_posts()) {
+            return ['total'=>0,'silent'=>0,'normal'=>0,'errors'=>0,'ids'=>[]];
+        }
+
+        $ids = wp_list_pluck($q->posts, 'ID');
+        wp_reset_postdata();
+
+        $stats = ['total'=>0,'silent'=>0,'normal'=>0,'errors'=>0,'ids'=>[]];
+
+        foreach ($ids as $id) {
+            $id = (int)$id;
+
+            $processed_at = get_post_meta($id, Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT, true);
+            if (!empty($processed_at)) continue;
+
+            $end_ts = (int) get_post_meta($id, '_spolek_end_ts', true);
+            $age = ($end_ts > 0) ? max(0, $now - $end_ts) : 0;
+
+            $stats['total']++;
+            $stats['ids'][] = $id;
+
+            try {
+                if ($end_ts > 0 && $age > ((int)$silent_after_days * DAY_IN_SECONDS)) {
+                    self::cron_close_silent($id);
+                    $stats['silent']++;
+                } else {
+                    self::cron_close($id);
+                    $stats['normal']++;
+                }
+            } catch (\Throwable $e) {
+                $stats['errors']++;
+                if (class_exists('Spolek_Audit')) {
+                    Spolek_Audit::log($id, null, 'close_scan_error', [
+                        'msg' => substr((string)$e->getMessage(), 0, 300),
+                    ]);
+                }
+            }
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Uzávěrka bez rozesílky e-mailů (tichý režim).
+     * Vytvoří výsledek, PDF a best-effort ZIP archiv, nastaví META_CLOSE_PROCESSED_AT.
+     */
+    public static function cron_close_silent(int $vote_post_id): void {
+        $vote_post_id = (int)$vote_post_id;
+
+        $post = get_post($vote_post_id);
+        if (!$post || $post->post_type !== Spolek_Hlasovani_MVP::CPT) return;
+
+        $processed_at = get_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT, true);
+        if (!empty($processed_at)) return;
+
+        $lock_token = self::acquire_close_lock($vote_post_id, 600);
+        if (!$lock_token) {
+            if (!wp_next_scheduled(self::HOOK_CLOSE, [$vote_post_id])) {
+                wp_schedule_single_event(time() + 120, self::HOOK_CLOSE, [$vote_post_id]);
+            }
+            return;
+        }
+
+        $attempt = 0;
+
+        try {
+            [$start_ts, $end_ts, $text] = Spolek_Hlasovani_MVP::get_vote_meta($vote_post_id);
+
+            $now = time();
+            if ($now < (int)$end_ts) {
+                wp_clear_scheduled_hook(self::HOOK_CLOSE, [$vote_post_id]);
+                wp_schedule_single_event(((int)$end_ts) + 60, self::HOOK_CLOSE, [$vote_post_id]);
+                return;
+            }
+
+            $status_now = Spolek_Hlasovani_MVP::get_status((int)$start_ts, (int)$end_ts);
+            if ($status_now !== 'closed') return;
+
+            $attempt = (int) get_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_ATTEMPTS, true);
+            $attempt++;
+            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_ATTEMPTS, (string)$attempt);
+            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_STARTED_AT, (string) time());
+
+            global $wpdb;
+            $table = $wpdb->prefix . Spolek_Hlasovani_MVP::TABLE;
+
+            $counts = $wpdb->get_results($wpdb->prepare(
+                "SELECT choice, COUNT(*) as c FROM $table WHERE vote_post_id=%d GROUP BY choice",
+                $vote_post_id
+            ), ARRAY_A);
+
+            $map = ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
+            foreach ($counts as $row) {
+                $ch = $row['choice'];
+                if (isset($map[$ch])) $map[$ch] = (int)$row['c'];
+            }
+
+            $eval = Spolek_Hlasovani_MVP::evaluate_vote($vote_post_id, $map);
+
+            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_RESULT_LABEL, $eval['label']);
+            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_RESULT_EXPLAIN, $eval['explain']);
+            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_RESULT_ADOPTED, $eval['adopted'] ? '1' : '0');
+
+            $pdf_path = Spolek_Hlasovani_MVP::generate_pdf_minutes($vote_post_id, $map, $text, (int)$start_ts, (int)$end_ts);
+            if ($pdf_path && file_exists($pdf_path)) {
+                if (class_exists('Spolek_Audit')) {
+                    Spolek_Audit::log($vote_post_id, null, 'pdf_generated', [
+                        'pdf'   => basename($pdf_path),
+                        'bytes' => (int) filesize($pdf_path),
+                    ]);
+                }
+            } else {
+                if (class_exists('Spolek_Audit')) {
+                    Spolek_Audit::log($vote_post_id, null, 'pdf_generation_failed', []);
+                }
+            }
+
+            if (class_exists('Spolek_Audit')) {
+                Spolek_Audit::log($vote_post_id, null, 'cron_close_silent_done', [
+                    'attempt' => (int)$attempt,
+                ]);
+            }
+
+            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT, (string) time());
+
+            if (class_exists('Spolek_Archive')) {
+                $res = Spolek_Archive::archive_vote($vote_post_id, false);
+                if (!(is_array($res) && !empty($res['ok']))) {
+                    $err = is_array($res) ? (string)($res['error'] ?? 'archive_failed') : 'archive_failed';
+                    if (class_exists('Spolek_Audit')) {
+                        Spolek_Audit::log($vote_post_id, null, 'archive_auto_failed', [
+                            'error' => $err,
+                        ]);
+                    }
+                }
+            }
+
+            delete_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_STARTED_AT);
+            delete_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_LAST_ERROR);
+            delete_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_NEXT_RETRY);
+
+        } catch (\Throwable $e) {
+            $msg = substr((string)$e->getMessage(), 0, 500);
+            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_LAST_ERROR, $msg);
+
+            if (class_exists('Spolek_Audit')) {
+                Spolek_Audit::log($vote_post_id, null, 'cron_close_silent_exception', [
+                    'msg'  => $msg,
+                    'file' => basename((string)$e->getFile()),
+                    'line' => (int)$e->getLine(),
+                ]);
+            }
+
+            self::schedule_close_retry($vote_post_id, (int)$attempt, 'silent_exception');
+
+        } finally {
+            self::release_close_lock($vote_post_id, $lock_token);
+        }
+    }
+
 
 
     // ===== Lock + retry (přesun z legacy) =====
