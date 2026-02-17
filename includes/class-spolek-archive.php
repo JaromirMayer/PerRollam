@@ -26,36 +26,83 @@ final class Spolek_Archive {
     public const META_ARCHIVED_AT    = '_spolek_archived_at';
     public const META_ARCHIVE_ERROR  = '_spolek_archive_error';
 
+    public const META_ARCHIVE_STORAGE = '_spolek_archive_storage'; // private|uploads_secure|uploads_legacy
+
+    private const STORAGE_PRIVATE        = 'private';
+    private const STORAGE_UPLOADS_SECURE = 'uploads_secure';
+    private const STORAGE_UPLOADS_LEGACY = 'uploads_legacy';
+
+    /** @var bool */
+    private static $bootstrapped = false;
+    /** @var string|null */
+    private static $root_dir = null;
+    /** @var string|null */
+    private static $dir_private = null;
+    /** @var string|null */
+    private static $dir_uploads_secure = null;
+    /** @var string|null */
+    private static $dir_uploads_legacy = null;
+
     /** Zajistí adresář + základní ochranu (best-effort). */
+    /** 
+     * Zajistí úložiště archivů.
+     *
+     * Hybridní režim:
+     * - preferuje PRIVATE adresář mimo webroot (nejbezpečnější, funguje na Apache i Nginx),
+     * - když není dostupný (open_basedir/práva), použije uploads do "neuhodnutelné" složky,
+     * - pro zpětnou kompatibilitu umí číst i staré archivy v původní uploads složce.
+     *
+     * Index archives.json se ukládá do PRIMARY úložiště (private / uploads_secure) a při prvním běhu
+     * se do něj sloučí položky ze starých indexů.
+     */
+    /** 
+     * Zajistí úložiště archivů.
+     *
+     * Hybridní režim:
+     * - preferuje PRIVATE adresář mimo webroot (nejbezpečnější, funguje na Apache i Nginx),
+     * - když není dostupný (open_basedir/práva), použije uploads do "neuhodnutelné" složky,
+     * - pro zpětnou kompatibilitu umí číst i staré archivy v původní uploads složce.
+     *
+     * Index archives.json se ukládá do PRIMARY úložiště (private / uploads_secure) a při prvním běhu
+     * se do něj sloučí položky ze starých indexů.
+     */
     public static function ensure_storage(): void {
-        $dir = self::archive_dir();
-        if (!is_dir($dir)) {
-            wp_mkdir_p($dir);
+        if (self::$bootstrapped) return;
+
+        // Výpočet cest
+        self::$dir_uploads_legacy = self::uploads_legacy_dir();
+        self::$dir_uploads_secure = self::uploads_secure_dir();
+        self::$dir_private        = self::private_dir();
+
+        // Public dirs (uploads) – best effort
+        $legacy_ok = self::ensure_dir(self::$dir_uploads_legacy, true, false);
+        $secure_ok = self::ensure_dir(self::$dir_uploads_secure, true, true);
+
+        // Private dir – vyžadujeme write test
+        $private_ok = self::ensure_dir(self::$dir_private, false, true);
+
+        // PRIMARY úložiště (fallback: uploads_secure -> uploads_legacy)
+        if ($private_ok) {
+            self::$root_dir = self::$dir_private;
+        } elseif ($secure_ok) {
+            self::$root_dir = self::$dir_uploads_secure;
+        } else {
+            self::$root_dir = self::$dir_uploads_legacy;
         }
 
-        // index.html aby se v adresáři nic nelistovalo
-        $index_html = $dir . '/index.html';
-        if (!file_exists($index_html)) {
-            @file_put_contents($index_html, "<!doctype html><meta charset=\"utf-8\"><title>403</title>", LOCK_EX);
-        }
+        // Označit bootstrap hotový dřív, než začneme číst index (aby nedošlo k rekurzi)
+        self::$bootstrapped = true;
 
-        // .htaccess (funguje na Apache; na Nginx je potřeba serverová konfigurace)
-        $ht = $dir . '/.htaccess';
-        if (!file_exists($ht)) {
-            $rules = "Order deny,allow\nDeny from all\n";
-            @file_put_contents($ht, $rules, LOCK_EX);
-        }
+        // Primary index
+        self::ensure_index((string)self::$root_dir);
 
-        // index JSON (pokud neexistuje)
-        $idx = self::index_path();
-        if (!file_exists($idx)) {
-            self::write_index([
-                'version'    => 1,
-                'updated_at' => time(),
-                'items'      => [],
-            ]);
-        }
+        // Sloučit staré indexy (zpětná kompatibilita)
+        self::merge_index_from_dir(self::$dir_uploads_legacy, self::STORAGE_UPLOADS_LEGACY);
+        self::merge_index_from_dir(self::$dir_uploads_secure, self::STORAGE_UPLOADS_SECURE);
+        self::merge_index_from_dir(self::$dir_private, self::STORAGE_PRIVATE);
     }
+
+
 
     /** Vrátí seřazený seznam všech archivů z indexu. */
     public static function list_archives(): array {
@@ -86,6 +133,57 @@ final class Spolek_Archive {
     }
 
     /**
+     * Najde fyzickou cestu k archivu (zpětně kompatibilní – hledá ve všech úložištích).
+     * @return array{path:string,storage:string}|null
+     */
+    public static function locate(string $file, ?string $storage_hint = null): ?array {
+        self::ensure_storage();
+
+        $file = basename((string)$file);
+        if ($file === '' || strpos($file, '..') !== false || strpos($file, '/') !== false || strpos($file, '\\') !== false) {
+            return null;
+        }
+
+        $candidates = [];
+
+        // 1) explicitní hint (meta/index)
+        if ($storage_hint) {
+            $candidates[] = (string)$storage_hint;
+        }
+
+        // 2) index (pokud existuje)
+        if (!$storage_hint) {
+            $it = self::find_by_file($file);
+            if ($it && !empty($it['storage'])) {
+                $candidates[] = (string)$it['storage'];
+            }
+        }
+
+        // 3) fallback pořadí
+        foreach ([self::STORAGE_PRIVATE, self::STORAGE_UPLOADS_SECURE, self::STORAGE_UPLOADS_LEGACY] as $st) {
+            if (!in_array($st, $candidates, true)) $candidates[] = $st;
+        }
+
+        foreach ($candidates as $st) {
+            $dir = self::dir_for_storage($st);
+            if ($dir === '') continue;
+            $path = $dir . '/' . $file;
+            if (is_file($path)) {
+                return ['path' => $path, 'storage' => $st];
+            }
+        }
+
+        return null;
+    }
+
+    /** Vrátí jen cestu (helper pro UI). */
+    public static function locate_path(string $file, ?string $storage_hint = null): ?string {
+        $loc = self::locate($file, $storage_hint);
+        return $loc ? (string)$loc['path'] : null;
+    }
+
+
+    /**
      * Vytvoří archiv hlasování.
      * - pokud už existuje (meta + soubor), vrací ok=true a stávající soubor
      */
@@ -102,10 +200,11 @@ final class Spolek_Archive {
         // Existující archiv?
         $existing_file = (string) get_post_meta($vote_post_id, self::META_ARCHIVE_FILE, true);
         if (!$force && $existing_file !== '') {
-            $existing_path = self::archive_dir() . '/' . basename($existing_file);
-            if (file_exists($existing_path)) {
+            $storage_hint = (string) get_post_meta($vote_post_id, self::META_ARCHIVE_STORAGE, true);
+            $loc = self::locate($existing_file, $storage_hint ?: null);
+            if ($loc && file_exists($loc['path'])) {
                 $sha = (string) get_post_meta($vote_post_id, self::META_ARCHIVE_SHA256, true);
-                return ['ok' => true, 'file' => basename($existing_file), 'path' => $existing_path, 'sha256' => $sha, 'already' => true];
+                return ['ok' => true, 'file' => basename($existing_file), 'path' => (string)$loc['path'], 'sha256' => $sha, 'already' => true];
             }
         }
 
@@ -145,10 +244,12 @@ final class Spolek_Archive {
         $slug = substr($slug, 0, 50);
 
         $date = $end_ts ? wp_date('Ymd', $end_ts, wp_timezone()) : wp_date('Ymd', time(), wp_timezone());
-        $token = function_exists('wp_generate_password') ? wp_generate_password(10, false, false) : (string) wp_rand(100000, 999999);
+        $token = function_exists('wp_generate_password') ? wp_generate_password(24, false, false) : (string) wp_rand(100000, 999999);
 
         $file = "vote-{$vote_post_id}-{$slug}-{$date}-{$token}.zip";
-        $path = self::archive_dir() . '/' . $file;
+        $storage = self::primary_storage();
+        $dir = self::dir_for_storage($storage);
+        $path = rtrim($dir, '/') . '/' . $file;
 
         if (!class_exists('ZipArchive')) {
             $err = 'ZipArchive not available on server';
@@ -247,6 +348,7 @@ final class Spolek_Archive {
         $archived_at = time();
 
         update_post_meta($vote_post_id, self::META_ARCHIVE_FILE, $file);
+        update_post_meta($vote_post_id, self::META_ARCHIVE_STORAGE, $storage);
         update_post_meta($vote_post_id, self::META_ARCHIVE_SHA256, $sha);
         update_post_meta($vote_post_id, self::META_ARCHIVED_AT, (string) $archived_at);
         delete_post_meta($vote_post_id, self::META_ARCHIVE_ERROR);
@@ -260,6 +362,7 @@ final class Spolek_Archive {
             'archived_at'  => $archived_at,
             'purged_at'    => null,
             'file'         => $file,
+            'storage'      => $storage,
             'sha256'       => $sha,
             'bytes'        => (int) filesize($path),
         ]);
@@ -282,10 +385,11 @@ final class Spolek_Archive {
             wp_die('Neplatný soubor.');
         }
 
-        $path = self::archive_dir() . '/' . $file;
-        if (!file_exists($path)) {
+        $loc = self::locate($file);
+        if (!$loc || !file_exists($loc['path'])) {
             wp_die('Soubor nenalezen.');
         }
+        $path = (string)$loc['path'];
 
         header('Content-Type: application/zip');
         header('Content-Disposition: attachment; filename="' . $file . '"');
@@ -314,8 +418,14 @@ final class Spolek_Archive {
 
         if ($file === '') return ['ok' => false, 'error' => 'archive_missing'];
 
-        $path = self::archive_dir() . '/' . $file;
-        if (!file_exists($path)) return ['ok' => false, 'error' => 'archive_file_missing'];
+        $storage_hint = (string) get_post_meta($vote_post_id, self::META_ARCHIVE_STORAGE, true);
+        if ($storage_hint === '') {
+            $it = self::find_by_file($file);
+            $storage_hint = (string)($it['storage'] ?? '');
+        }
+        $loc = self::locate($file, $storage_hint !== '' ? $storage_hint : null);
+        if (!$loc || !file_exists($loc['path'])) return ['ok' => false, 'error' => 'archive_file_missing'];
+        $path = (string)$loc['path'];
 
         // Bezpečnost: ověření integrity archivu před mazáním z DB
         $expected_sha = (string) get_post_meta($vote_post_id, self::META_ARCHIVE_SHA256, true);
@@ -376,21 +486,239 @@ final class Spolek_Archive {
         ];
     }
 
-    // ===== internals =====
+    
+    // ===== internals (storage + index) =====
 
+    /** Vrací PRIMARY úložiště (private pokud lze, jinak uploads_secure). */
     private static function archive_dir(): string {
+        self::ensure_storage();
+        return (string) self::$root_dir;
+    }
+
+    /** Vrátí absolutní cestu k indexu v PRIMARY úložišti. */
+    private static function index_path(): string {
+        return rtrim(self::archive_dir(), '/') . '/' . self::INDEX_FILE;
+    }
+
+    /** Primární úložiště jako klíč. */
+    /** Primární úložiště jako klíč. */
+    private static function primary_storage(): string {
+        self::ensure_storage();
+        if (self::$root_dir && self::$dir_private && self::$root_dir === self::$dir_private) return self::STORAGE_PRIVATE;
+        if (self::$root_dir && self::$dir_uploads_legacy && self::$root_dir === self::$dir_uploads_legacy) return self::STORAGE_UPLOADS_LEGACY;
+        return self::STORAGE_UPLOADS_SECURE;
+    }
+
+
+    /** Mapování storage klíče -> adresář. */
+    private static function dir_for_storage(string $storage): string {
+        self::ensure_storage();
+        switch ($storage) {
+            case self::STORAGE_PRIVATE:
+                return (string) (self::$dir_private ?: '');
+            case self::STORAGE_UPLOADS_SECURE:
+                return (string) (self::$dir_uploads_secure ?: '');
+            case self::STORAGE_UPLOADS_LEGACY:
+                return (string) (self::$dir_uploads_legacy ?: '');
+            default:
+                return '';
+        }
+    }
+
+    /** Legacy uploads (původní cesta – kvůli zpětné kompatibilitě). */
+    private static function uploads_legacy_dir(): string {
         $up = wp_upload_dir();
         $base = rtrim((string)($up['basedir'] ?? ''), '/');
-        if ($base === '') {
-            // fallback (nemělo by nastat)
-            $base = WP_CONTENT_DIR . '/uploads';
-        }
+        if ($base === '') $base = WP_CONTENT_DIR . '/uploads';
         return $base . '/' . self::DIR_SLUG;
     }
 
-    private static function index_path(): string {
-        return self::archive_dir() . '/' . self::INDEX_FILE;
+    /** Secure uploads (neuhodnutelný adresář podle salt). */
+    private static function uploads_secure_dir(): string {
+        $up = wp_upload_dir();
+        $base = rtrim((string)($up['basedir'] ?? ''), '/');
+        if ($base === '') $base = WP_CONTENT_DIR . '/uploads';
+
+        $suffix = self::secret_suffix();
+        // sibling k legacy "archive" adresáři: spolek-hlasovani/archive-<suffix>
+        $secure_slug = 'spolek-hlasovani/archive-' . $suffix;
+
+        /** Filter: umožní upravit slug secure uploads úložiště */
+        $secure_slug = (string) apply_filters('spolek_archive_uploads_secure_slug', $secure_slug);
+
+        return $base . '/' . ltrim($secure_slug, '/');
     }
+
+    /** Private úložiště mimo webroot (best-effort). */
+    private static function private_dir(): string {
+        $base = rtrim(dirname(ABSPATH), '/');
+        $default = $base . '/spolek-archives/spolek-hlasovani/archive';
+
+        /** Filter: umožní nastavit private úložiště absolutní cestou */
+        $dir = (string) apply_filters('spolek_archive_private_dir', $default);
+
+        return rtrim($dir, '/');
+    }
+
+    /** Stabilní suffix (12 hex) – nemá být veřejně uhodnutelný. */
+    private static function secret_suffix(): string {
+        $seed = '';
+        if (function_exists('wp_salt')) {
+            $seed = (string) wp_salt('auth');
+        }
+        if ($seed === '' && defined('AUTH_KEY')) {
+            $seed = (string) AUTH_KEY;
+        }
+        if ($seed === '') {
+            $seed = (string) (function_exists('home_url') ? home_url('/') : 'spolek');
+        }
+        return substr(hash('sha256', $seed . '|spolek_archive'), 0, 12);
+    }
+
+    /**
+     * Zajistí existenci adresáře + (pokud public) základní ochranu.
+     * @return bool true pokud adresář existuje a (volitelně) je zapisovatelný
+     */
+    private static function ensure_dir(string $dir, bool $public, bool $require_write): bool {
+        $dir = rtrim((string)$dir, '/');
+        if ($dir === '') return false;
+
+        if (!is_dir($dir)) {
+            if (!wp_mkdir_p($dir)) {
+                return false;
+            }
+        }
+
+        // základní write test (kvůli open_basedir/právům)
+        if ($require_write) {
+            $test = $dir . '/.spolek_write_test';
+            $ok = @file_put_contents($test, '1', LOCK_EX);
+            if ($ok === false) {
+                @unlink($test);
+                return false;
+            }
+            @unlink($test);
+        }
+
+        // index.html aby se v adresáři nic nelistovalo
+        $index_html = $dir . '/index.html';
+        if (!file_exists($index_html)) {
+            @file_put_contents($index_html, "<!doctype html><meta charset=\"utf-8\"><title>403</title>", LOCK_EX);
+        }
+
+        if ($public) {
+            // .htaccess (Apache) – best effort
+            $ht = $dir . '/.htaccess';
+            if (!file_exists($ht)) {
+                $rules = "<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n"
+                       . "<IfModule !mod_authz_core.c>\nOrder deny,allow\nDeny from all\n</IfModule>\n"
+                       . "Options -Indexes\n";
+                @file_put_contents($ht, $rules, LOCK_EX);
+            }
+
+            // web.config (IIS) – best effort
+            $wc = $dir . '/web.config';
+            if (!file_exists($wc)) {
+                $xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                     . "<configuration>\n  <system.webServer>\n    <authorization>\n      <deny users=\"*\" />\n    </authorization>\n  </system.webServer>\n</configuration>\n";
+                @file_put_contents($wc, $xml, LOCK_EX);
+            }
+        }
+
+        return true;
+    }
+
+    /** Vytvoří index, pokud neexistuje. */
+    private static function ensure_index(string $dir): void {
+        $idx = rtrim($dir, '/') . '/' . self::INDEX_FILE;
+        if (!file_exists($idx)) {
+            self::write_index_to($idx, [
+                'version'    => 2,
+                'updated_at' => time(),
+                'items'      => [],
+            ]);
+        }
+    }
+
+    /** Sloučí index z jiného úložiště do primárního indexu. */
+    private static function merge_index_from_dir(string $src_dir, string $default_storage): void {
+        $src_dir = rtrim((string)$src_dir, '/');
+        if ($src_dir === '' || $src_dir === rtrim((string)self::$root_dir, '/')) return;
+
+        $src_path = $src_dir . '/' . self::INDEX_FILE;
+        if (!file_exists($src_path)) return;
+
+        $src_data = self::read_index_file($src_path);
+        $src_items = (array)($src_data['items'] ?? []);
+        if (!$src_items) return;
+
+        $root = self::read_index();
+        $root_items = (array)($root['items'] ?? []);
+
+        // Lookup pro rychlé sloučení
+        $by_vote = [];
+        $by_file = [];
+        foreach ($root_items as $k => $it) {
+            $vid = (int)($it['vote_post_id'] ?? 0);
+            $fil = (string)($it['file'] ?? '');
+            if ($vid) $by_vote[$vid] = $k;
+            if ($fil !== '') $by_file[$fil] = $k;
+        }
+
+        foreach ($src_items as $it) {
+            if (!is_array($it)) continue;
+            $file = basename((string)($it['file'] ?? ''));
+            if ($file === '') continue;
+
+            $it['file'] = $file;
+
+            // doplnit storage pokud chybí
+            if (empty($it['storage'])) {
+                $it['storage'] = $default_storage;
+            }
+
+            // doplnit bytes, když chybí
+            if (empty($it['bytes'])) {
+                $p = $src_dir . '/' . $file;
+                if (is_file($p)) $it['bytes'] = (int) filesize($p);
+            }
+
+            $vote_id = (int)($it['vote_post_id'] ?? 0);
+
+            if ($vote_id && isset($by_vote[$vote_id])) {
+                $root_items[$by_vote[$vote_id]] = array_merge((array)$root_items[$by_vote[$vote_id]], $it);
+            } elseif (isset($by_file[$file])) {
+                $root_items[$by_file[$file]] = array_merge((array)$root_items[$by_file[$file]], $it);
+            } else {
+                $root_items[] = $it;
+            }
+        }
+
+        $root['version'] = 2;
+        $root['items'] = array_values($root_items);
+        self::write_index($root);
+    }
+
+    private static function read_index_file(string $path): array {
+        $raw = (string) @file_get_contents($path);
+        $data = json_decode($raw, true);
+        if (!is_array($data)) return ['version' => 2, 'updated_at' => time(), 'items' => []];
+        if (!isset($data['items']) || !is_array($data['items'])) $data['items'] = [];
+        return $data;
+    }
+
+    private static function write_index_to(string $path, array $data): void {
+        $data['updated_at'] = time();
+
+        $tmp = $path . '.tmp';
+        $json = function_exists('wp_json_encode')
+            ? wp_json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT)
+            : json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+
+        @file_put_contents($tmp, (string)$json, LOCK_EX);
+        @rename($tmp, $path);
+    }
+
 
     private static function read_index(): array {
         self::ensure_storage();
@@ -408,20 +736,20 @@ final class Spolek_Archive {
     }
 
     private static function write_index(array $data): void {
-        $dir = self::archive_dir();
-        if (!is_dir($dir)) wp_mkdir_p($dir);
-
-        $data['updated_at'] = time();
-
+        self::ensure_storage();
         $path = self::index_path();
-        $tmp = $path . '.tmp';
-
-        $json = wp_json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-        @file_put_contents($tmp, $json, LOCK_EX);
-        @rename($tmp, $path);
+        $dir  = dirname($path);
+        if (!is_dir($dir)) {
+            wp_mkdir_p($dir);
+        }
+        self::write_index_to($path, $data);
     }
 
+
     private static function upsert_index_item(array $item): void {
+        if (empty($item['storage'])) {
+            $item['storage'] = self::primary_storage();
+        }
         $data = self::read_index();
         $items = (array)($data['items'] ?? []);
         $found = false;
@@ -579,4 +907,67 @@ final class Spolek_Archive {
 
         return (string)$csv;
     }
+    /**
+     * Diagnostika úložiště archivů (pro portál správce).
+     * Vrací primární režim, cestu a stav jednotlivých variant.
+     */
+    public static function storage_status(): array {
+        self::ensure_storage();
+
+        $primary = self::primary_storage();
+        $labels = [
+            self::STORAGE_PRIVATE        => 'PRIVATE (mimo webroot)',
+            self::STORAGE_UPLOADS_SECURE => 'UPLOADS_SECURE (uploads, neuhodnutelná složka)',
+            self::STORAGE_UPLOADS_LEGACY => 'UPLOADS_LEGACY (původní uploads cesta)',
+        ];
+
+        $checks = [];
+        foreach ([self::STORAGE_PRIVATE, self::STORAGE_UPLOADS_SECURE, self::STORAGE_UPLOADS_LEGACY] as $k) {
+            $dir = self::dir_for_storage($k);
+            $checks[$k] = [
+                'dir'      => (string)$dir,
+                'exists'   => ($dir && is_dir($dir)),
+                'writable' => ($dir && is_dir($dir) && is_writable($dir)),
+                'label'    => ($labels[$k] ?? $k),
+            ];
+        }
+
+        return [
+            'primary'       => $primary,
+            'primary_label' => ($labels[$primary] ?? $primary),
+            'root_dir'      => (string)(self::$root_dir ?: ''),
+            'checks'        => $checks,
+        ];
+    }
+
+    /**
+     * Otestuje zápis do úložiště (default: primární).
+     * @return array{ok:bool,storage:string,dir:string,error?:string}
+     */
+    public static function test_write(string $storage = ''): array {
+        self::ensure_storage();
+
+        $storage = $storage ?: self::primary_storage();
+        $dir = self::dir_for_storage($storage);
+
+        if (!$dir || !is_dir($dir)) {
+            return ['ok' => false, 'storage' => $storage, 'dir' => (string)$dir, 'error' => 'Adresář neexistuje.'];
+        }
+
+        $name = '.spolek-write-test-' . time() . '-' . wp_generate_password(10, false, false) . '.tmp';
+        $tmp  = rtrim($dir, '/') . '/' . $name;
+
+        $bytes = @file_put_contents($tmp, 'spolek write test ' . time());
+        if ($bytes === false) {
+            return ['ok' => false, 'storage' => $storage, 'dir' => (string)$dir, 'error' => 'Nepodařilo se zapsat testovací soubor.'];
+        }
+
+        @unlink($tmp);
+        if (file_exists($tmp)) {
+            return ['ok' => false, 'storage' => $storage, 'dir' => (string)$dir, 'error' => 'Zápis OK, ale testovací soubor nelze smazat.'];
+        }
+
+        return ['ok' => true, 'storage' => $storage, 'dir' => (string)$dir];
+    }
+
 }

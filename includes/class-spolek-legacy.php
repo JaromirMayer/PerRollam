@@ -39,6 +39,8 @@ class Spolek_Hlasovani_MVP {
         add_action('admin_post_spolek_download_archive', [__CLASS__, 'handle_download_archive']);
         add_action('admin_post_spolek_purge_vote', [__CLASS__, 'handle_purge_vote']);
         add_action('admin_post_spolek_run_purge_scan', [__CLASS__, 'handle_run_purge_scan']);
+        add_action('admin_post_spolek_run_close_scan', [__CLASS__, 'handle_run_close_scan']);
+        add_action('admin_post_spolek_test_archive_storage', [__CLASS__, 'handle_test_archive_storage']);
         add_action('admin_post_spolek_download_pdf', [__CLASS__, 'handle_download_pdf']);
         add_action('admin_post_spolek_member_pdf', [__CLASS__, 'handle_member_pdf']);
         add_action('admin_post_nopriv_spolek_member_pdf', [__CLASS__, 'handle_member_pdf']);
@@ -509,12 +511,28 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
     }
 
     public static function render_portal() {
-        if (!is_user_logged_in()) {
-            return '<p>Musíte být přihlášeni.</p>';
-        }
+
+    $assets = self::portal_assets();
+
+    if (!is_user_logged_in()) {
+
+        // návrat po přihlášení zpět na portál
+        $redirect = self::portal_url();
+
+        // login stránka /login (i když není "WP stránka", URL funguje)
+        $login_base = home_url('/login/');
+        $login_url  = add_query_arg('redirect_to', $redirect, $login_base);
+
+        // ponech si text jaký chceš (teď máš "Sekce určená pro členy Spolku.")
+        $out  = '<div class="spolek-login-box">';
+        $out .= '<p>Sekce určená pro členy Spolku.</p>';
+        $out .= '<p><a class="spolek-login-button" href="' . esc_url($login_url) . '">Přihlásit se</a></p>';
+        $out .= '</div>';
+
+        return '<div class="spolek-portal">' . $assets . $out . '</div>';
+    }
 
         $out = '';
-        $assets = self::portal_assets();
 
         // Detail?
         $vote_id = (int) get_query_var('spolek_vote');
@@ -556,7 +574,30 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
     /** Vizuální helpery portálu (oddělovače sekcí). */
     private static function portal_assets(): string {
         return '<style>
-            .spolek-portal .spolek-section-sep{border:0;border-top:1px solid var(--spolek-accent,#2271b1);margin:14px 0;}
+            .spolek-portal .spolek-section-sep{
+            border:0;
+            border-top:1px solid var(--spolek-accent,#2271b1);margin:14px 0;
+            }
+            .spolek-portal .spolek-login-box{
+            max-width:720px;
+            margin:12px 0;
+            padding:16px;
+            border:1px solid #ddd;
+            background:#fff;
+            }
+            .spolek-portal .spolek-login-button{
+            display:inline-block;
+            padding:10px 16px;
+            border-radius:6px;
+            background:var(--spolek-accent,#2271b1);
+            color:#fff;
+            text-decoration:none;
+            }
+            .spolek-portal .spolek-login-button:hover{
+            filter:brightness(.95);
+            color:#fff;
+            text-decoration:none;
+            }
         </style>
         <script>
         document.addEventListener("DOMContentLoaded", function(){
@@ -717,6 +758,19 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
             $html .= '<p><strong>Hlasování bylo smazáno z databáze (archivní ZIP zůstal uložen).</strong></p>';
         }
 
+        if (!empty($_GET['notice'])) {
+            $html .= '<p><strong>' . esc_html((string)$_GET['notice']) . '</strong></p>';
+        }
+
+        $run_action = esc_url(admin_url('admin-post.php'));
+        $html .= '<form method="post" action="'.$run_action.'" style="margin:8px 0 12px 0;">'
+            . '<input type="hidden" name="action" value="spolek_run_close_scan">'
+            . wp_nonce_field('spolek_run_close_scan', '_nonce', true, false)
+            . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
+            . '<button type="submit">Dohnat uzávěrky (starší hlasování)</button>'
+            . '<div style="margin-top:6px;opacity:.75;font-size:12px;">Zpracuje max 10 ukončených hlasování, která stále čekají na cron. Hlasování uzavřená před více než 7 dny dožene v tichém režimu (bez rozesílky e-mailů), ale vytvoří výsledek, PDF a archiv ZIP.</div>'
+            . '</form>';
+
         if (!class_exists('Spolek_Archive')) {
             return $html . '<p style="color:#b00;">Chybí třída Spolek_Archive (soubor include). Archivace není dostupná.</p>';
         }
@@ -784,9 +838,8 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
                     $has_file = false;
                     $file = basename($file);
                     if ($file !== '') {
-                        $item = Spolek_Archive::find_by_file($file);
-                        $path = (wp_upload_dir()['basedir'] ?? '') . '/' . Spolek_Archive::DIR_SLUG . '/' . $file;
-                        if ($item || ($path && file_exists($path))) $has_file = true;
+                        $path = Spolek_Archive::locate_path($file);
+                        if ($path) $has_file = true;
                     }
 
                     if ($has_file) {
@@ -847,6 +900,65 @@ private static function schedule_vote_events(int $post_id, int $start_ts, int $e
         if (!self::is_manager()) return '';
 
         $html = '<h2>Archivní ZIP soubory, po smazání z DB</h2>';
+        // Diagnostika úložiště archivů (4.4.1)
+        if (class_exists('Spolek_Archive') && method_exists('Spolek_Archive', 'storage_status')) {
+            $st = Spolek_Archive::storage_status();
+
+            // Výsledek testu zápisu
+            if (!empty($_GET['storage_test'])) {
+                $ok = !empty($_GET['storage_test_ok']);
+                $msg = $ok ? 'Test zápisu: OK ✅' : 'Test zápisu: CHYBA ❌';
+                if (!$ok && !empty($_GET['storage_test_err'])) {
+                    $msg .= ' – ' . esc_html((string)$_GET['storage_test_err']);
+                }
+                $html .= '<p><strong>' . $msg . '</strong></p>';
+            }
+
+            $html .= '<div style="padding:10px 12px;border:1px solid rgba(0,0,0,.12);border-radius:8px;margin:10px 0 12px 0;">';
+            $html .= '<div style="font-weight:600;margin-bottom:6px;">Úložiště archivních ZIPů</div>';
+            $html .= '<div style="opacity:.85;margin-bottom:8px;">Primární režim: <strong>' . esc_html((string)($st['primary_label'] ?? ($st['primary'] ?? ''))) . '</strong></div>';
+
+            $root_dir = (string)($st['root_dir'] ?? '');
+            if ($root_dir !== '') {
+                $html .= '<div style="opacity:.75;font-size:12px;margin-bottom:8px;">Cesta: <code>' . esc_html($root_dir) . '</code></div>';
+            }
+
+            $checks = (array)($st['checks'] ?? []);
+            if ($checks) {
+                $html .= '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
+                $html .= '<tr><th style="text-align:left;padding:6px 4px;border-bottom:1px solid rgba(0,0,0,.08);">Varianta</th>'
+                    . '<th style="text-align:left;padding:6px 4px;border-bottom:1px solid rgba(0,0,0,.08);">Adresář</th>'
+                    . '<th style="text-align:center;padding:6px 4px;border-bottom:1px solid rgba(0,0,0,.08);">Existuje</th>'
+                    . '<th style="text-align:center;padding:6px 4px;border-bottom:1px solid rgba(0,0,0,.08);">Zápis</th></tr>';
+
+                foreach ($checks as $k => $row) {
+                    $dir = (string)($row['dir'] ?? '');
+                    $exists = !empty($row['exists']);
+                    $writable = !empty($row['writable']);
+                    $label = (string)($row['label'] ?? $k);
+
+                    $html .= '<tr>'
+                        . '<td style="padding:6px 4px;vertical-align:top;"><strong>' . esc_html($label) . '</strong></td>'
+                        . '<td style="padding:6px 4px;vertical-align:top;"><code style="font-size:12px;">' . esc_html($dir) . '</code></td>'
+                        . '<td style="padding:6px 4px;text-align:center;">' . ($exists ? '✅' : '❌') . '</td>'
+                        . '<td style="padding:6px 4px;text-align:center;">' . ($writable ? '✅' : '❌') . '</td>'
+                        . '</tr>';
+                }
+
+                $html .= '</table>';
+            }
+
+            $test_action = esc_url(admin_url('admin-post.php'));
+            $html .= '<form method="post" action="'.$test_action.'" style="margin-top:10px;">'
+                . '<input type="hidden" name="action" value="spolek_test_archive_storage">'
+                . wp_nonce_field('spolek_test_archive_storage', '_nonce', true, false)
+                . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
+                . '<button type="submit">Otestovat zápis do úložiště</button>'
+                . '<span style="margin-left:10px;opacity:.75;font-size:12px;">(zapíše a smaže malý testovací soubor v primární lokaci)</span>'
+                . '</form>';
+
+            $html .= '</div>';
+        }
 
 // Ruční spuštění purge scanu (4.3) – pro test / okamžité pročištění (maže i audit)
 $purged_n = isset($_GET['purge_scan_purged']) ? (int)$_GET['purge_scan_purged'] : null;
@@ -1387,6 +1499,74 @@ public static function handle_cast_vote() {
         wp_safe_redirect(add_query_arg('err', rawurlencode($err), $return_to));
         exit;
     }
+
+public static function handle_test_archive_storage() : void {
+    if (!is_user_logged_in() || !self::is_manager()) {
+        wp_die('Nemáte oprávnění.');
+    }
+
+    if (!isset($_POST['_nonce']) || !wp_verify_nonce($_POST['_nonce'], 'spolek_test_archive_storage')) {
+        wp_die('Neplatný nonce.');
+    }
+
+    $return_to = self::get_return_to(home_url('/clenove/hlasovani/'));
+
+    if (!class_exists('Spolek_Archive') || !method_exists('Spolek_Archive', 'test_write')) {
+        wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Archive::test_write.'), $return_to));
+        exit;
+    }
+
+    $res = [];
+    try {
+        $res = Spolek_Archive::test_write();
+    } catch (Throwable $e) {
+        $res = ['ok' => false, 'error' => $e->getMessage()];
+    }
+
+    $args = [
+        'storage_test' => '1',
+        'storage_test_ok' => !empty($res['ok']) ? '1' : '0',
+    ];
+    if (!empty($res['storage'])) $args['storage_test_storage'] = (string)$res['storage'];
+    if (!empty($res['dir']))     $args['storage_test_dir']     = (string)$res['dir'];
+    if (!empty($res['error']))   $args['storage_test_err']     = (string)$res['error'];
+
+    wp_safe_redirect(add_query_arg($args, $return_to));
+    exit;
+}
+
+public static function handle_run_close_scan() : void {
+    if (!is_user_logged_in() || !self::is_manager()) {
+        wp_die('Nemáte oprávnění.');
+    }
+
+    if (!isset($_POST['_nonce']) || !wp_verify_nonce($_POST['_nonce'], 'spolek_run_close_scan')) {
+        wp_die('Neplatný nonce.');
+    }
+
+    $return_to = self::get_return_to(home_url('/clenove/hlasovani/'));
+
+    if (!class_exists('Spolek_Cron') || !method_exists('Spolek_Cron', 'close_scan')) {
+        wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Cron::close_scan.'), $return_to));
+        exit;
+    }
+
+    try {
+        $stats = Spolek_Cron::close_scan();
+    } catch (Throwable $e) {
+        wp_safe_redirect(add_query_arg('err', rawurlencode('Close scan selhal: ' . $e->getMessage()), $return_to));
+        exit;
+    }
+
+    $msg = 'Dohnání uzávěrek: zpracováno ' . (int)($stats['total'] ?? 0)
+         . ' (tichý režim: ' . (int)($stats['silent'] ?? 0)
+         . ', standard: ' . (int)($stats['normal'] ?? 0)
+         . ', chyby: ' . (int)($stats['errors'] ?? 0) . ').';
+
+    wp_safe_redirect(add_query_arg('notice', rawurlencode($msg), $return_to));
+    exit;
+}
+
 
 public static function handle_run_purge_scan() : void {
     if (!is_user_logged_in() || !self::is_manager()) {
