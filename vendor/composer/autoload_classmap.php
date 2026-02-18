@@ -277,6 +277,7 @@ return array(
     'Safe\\Exceptions\\ZlibException' => $vendorDir . '/thecodingmachine/safe/generated/Exceptions/ZlibException.php',
     'Spolek_Archive' => $baseDir . '/includes/class-spolek-archive.php',
     'Spolek_Audit' => $baseDir . '/includes/class-spolek-audit.php',
+    'Spolek_Config' => $baseDir . '/includes/class-spolek-config.php',
     'Spolek_Cron' => $baseDir . '/includes/class-spolek-cron.php',
     'Spolek_Hlasovani_MVP' => $baseDir . '/includes/class-spolek-legacy.php',
     'Spolek_Mailer' => $baseDir . '/includes/class-spolek-mailer.php',

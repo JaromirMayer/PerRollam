@@ -404,6 +404,7 @@ class ComposerStaticInitac2d307f4ed514763a8119f3523066bb
         'Safe\\Exceptions\\ZlibException' => __DIR__ . '/..' . '/thecodingmachine/safe/generated/Exceptions/ZlibException.php',
         'Spolek_Archive' => __DIR__ . '/../..' . '/includes/class-spolek-archive.php',
         'Spolek_Audit' => __DIR__ . '/../..' . '/includes/class-spolek-audit.php',
+        'Spolek_Config' => __DIR__ . '/../..' . '/includes/class-spolek-config.php',
         'Spolek_Cron' => __DIR__ . '/../..' . '/includes/class-spolek-cron.php',
         'Spolek_Hlasovani_MVP' => __DIR__ . '/../..' . '/includes/class-spolek-legacy.php',
         'Spolek_Mailer' => __DIR__ . '/../..' . '/includes/class-spolek-mailer.php',

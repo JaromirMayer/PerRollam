@@ -2,13 +2,12 @@
 if (!defined('ABSPATH')) exit;
 
 final class Spolek_Cron {
-
-    public const HOOK_CLOSE        = 'spolek_vote_close';
-    public const HOOK_REMINDER     = 'spolek_vote_reminder';
-    public const HOOK_ARCHIVE_SCAN = 'spolek_archive_scan';
-    public const HOOK_PURGE_SCAN   = 'spolek_purge_scan';
-    public const HOOK_CLOSE_SCAN   = 'spolek_close_scan';
-
+    
+    public const HOOK_CLOSE        = Spolek_Config::HOOK_CLOSE;
+    public const HOOK_REMINDER     = Spolek_Config::HOOK_REMINDER;
+    public const HOOK_ARCHIVE_SCAN = Spolek_Config::HOOK_ARCHIVE_SCAN;
+    public const HOOK_PURGE_SCAN   = Spolek_Config::HOOK_PURGE_SCAN;
+    public const HOOK_CLOSE_SCAN   = Spolek_Config::HOOK_CLOSE_SCAN;
 
     public function register(): void {
         // Cron hooky – delegujeme do legacy

@@ -14,6 +14,7 @@ final class Spolek_Plugin {
      * Audit -> Mailer -> Votes -> Cron -> Archive -> Legacy -> Portal -> PDF
      */
     private const DEPENDENCIES = [
+        'includes/class-spolek-config.php',
         'includes/class-spolek-audit.php',
         'includes/class-spolek-mailer.php',
         'includes/class-spolek-votes.php',

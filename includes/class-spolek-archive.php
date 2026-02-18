@@ -17,16 +17,15 @@ if (!defined('ABSPATH')) exit;
  */
 final class Spolek_Archive {
 
-    public const DIR_SLUG = 'spolek-hlasovani/archive';
-    public const INDEX_FILE = 'archives.json';
+    public const DIR_SLUG = Spolek_Config::ARCHIVE_DIR_SLUG;
+    public const INDEX_FILE = Spolek_Config::ARCHIVE_INDEX_FILE;
 
     // Post meta (u existujícího hlasování – než dojde k purge)
-    public const META_ARCHIVE_FILE   = '_spolek_archive_file';   // basename zip
-    public const META_ARCHIVE_SHA256 = '_spolek_archive_sha256';
-    public const META_ARCHIVED_AT    = '_spolek_archived_at';
-    public const META_ARCHIVE_ERROR  = '_spolek_archive_error';
-
-    public const META_ARCHIVE_STORAGE = '_spolek_archive_storage'; // private|uploads_secure|uploads_legacy
+    public const META_ARCHIVE_FILE    = Spolek_Config::META_ARCHIVE_FILE;
+    public const META_ARCHIVE_SHA256  = Spolek_Config::META_ARCHIVE_SHA256;
+    public const META_ARCHIVED_AT     = Spolek_Config::META_ARCHIVED_AT;
+    public const META_ARCHIVE_ERROR   = Spolek_Config::META_ARCHIVE_ERROR;
+    public const META_ARCHIVE_STORAGE = Spolek_Config::META_ARCHIVE_STORAGE;
 
     private const STORAGE_PRIVATE        = 'private';
     private const STORAGE_UPLOADS_SECURE = 'uploads_secure';
