@@ -18,9 +18,13 @@ final class Spolek_Plugin {
         'includes/class-spolek-audit.php',
         'includes/class-spolek-mailer.php',
         'includes/class-spolek-votes.php',
+        'includes/class-spolek-vote-processor.php',
         'includes/class-spolek-cron.php',
         'includes/class-spolek-archive.php',
         'includes/class-spolek-legacy.php',
+        'includes/class-spolek-votes-controller.php',
+        'includes/class-spolek-archive-controller.php',
+        'includes/class-spolek-pdf-controller.php',
         'includes/class-spolek-portal.php',
         'includes/class-spolek-pdf.php',
     ];
@@ -56,6 +60,16 @@ final class Spolek_Plugin {
         $this->booted = true;
 
         self::require_dependencies();
+        
+        if (class_exists('Spolek_Votes_Controller')) {
+        (new Spolek_Votes_Controller())->register();
+        }
+        if (class_exists('Spolek_Archive_Controller')) {
+        (new Spolek_Archive_Controller())->register();
+        }
+        if (class_exists('Spolek_PDF_Controller')) {
+        (new Spolek_PDF_Controller())->register();
+        }
 
         if (class_exists('Spolek_Cron')) {
             (new Spolek_Cron())->register();

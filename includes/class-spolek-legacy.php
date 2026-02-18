@@ -27,32 +27,17 @@ class Spolek_Hlasovani_MVP {
     const META_ARCHIVE_ERROR  = '_spolek_archive_error';
 
     public static function init() {
-        add_action('init', [__CLASS__, 'register_cpt']);
-        add_action('init', [__CLASS__, 'register_shortcodes']);
+    add_action('init', [__CLASS__, 'register_cpt']);
+    add_action('init', [__CLASS__, 'register_shortcodes']);
 
-        // Form handlers (front-end post → admin-post.php)
-        add_action('admin_post_spolek_create_vote', [__CLASS__, 'handle_create_vote']);
-        add_action('admin_post_spolek_cast_vote', [__CLASS__, 'handle_cast_vote']);
-        add_action('admin_post_spolek_export_csv', [__CLASS__, 'handle_export_csv']);
-        // 4.2 – Archiv
-        add_action('admin_post_spolek_archive_vote', [__CLASS__, 'handle_archive_vote']);
-        add_action('admin_post_spolek_download_archive', [__CLASS__, 'handle_download_archive']);
-        add_action('admin_post_spolek_purge_vote', [__CLASS__, 'handle_purge_vote']);
-        add_action('admin_post_spolek_run_purge_scan', [__CLASS__, 'handle_run_purge_scan']);
-        add_action('admin_post_spolek_run_close_scan', [__CLASS__, 'handle_run_close_scan']);
-        add_action('admin_post_spolek_test_archive_storage', [__CLASS__, 'handle_test_archive_storage']);
-        add_action('admin_post_spolek_download_pdf', [__CLASS__, 'handle_download_pdf']);
-        add_action('admin_post_spolek_member_pdf', [__CLASS__, 'handle_member_pdf']);
-        add_action('admin_post_nopriv_spolek_member_pdf', [__CLASS__, 'handle_member_pdf']);
-        // add_action('spolek_vote_reminder', [__CLASS__, 'handle_cron_reminder'], 10, 2);
-        // add_action('spolek_vote_close', [__CLASS__, 'handle_cron_close'], 10, 1);
+    // admin_post handlery jsou od 4.1.6 registrované v controllerech:
+    // Spolek_Votes_Controller, Spolek_Archive_Controller, Spolek_PDF_Controller
 
-        // Query var pro detail
-        add_filter('query_vars', function($vars){
-            $vars[] = 'spolek_vote';
-            return $vars;
-        });
-    }
+    add_filter('query_vars', function($vars){
+        $vars[] = 'spolek_vote';
+        return $vars;
+    });
+}
     
     public static function handle_download_pdf() {
     if (!is_user_logged_in() || !self::is_manager()) {
