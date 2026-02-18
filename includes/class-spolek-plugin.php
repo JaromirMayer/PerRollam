@@ -34,10 +34,21 @@ final class Spolek_Plugin {
     private function __construct() {}
 
     private static function require_dependencies(): void {
-        foreach (self::DEPENDENCIES as $rel) {
-            require_once SPOLEK_HLASOVANI_PATH . $rel;
-        }
+
+    // Pokud funguje Composer autoload (classmap includes/), class_exists() si třídy načte samo.
+    // Když vendor/autoload.php chybí, vrátí false a spadneme do ručního require_once.
+    if (
+        class_exists('Spolek_Cron') &&
+        class_exists('Spolek_Archive') &&
+        class_exists('Spolek_Hlasovani_MVP')
+    ) {
+        return;
     }
+
+    foreach (self::DEPENDENCIES as $rel) {
+        require_once SPOLEK_HLASOVANI_PATH . $rel;
+    }
+}
 
     public function run(): void {
         if ($this->booted) return;
