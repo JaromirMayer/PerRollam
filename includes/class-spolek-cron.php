@@ -116,7 +116,7 @@ final class Spolek_Cron {
 
             $res = Spolek_Archive::archive_vote($id, false);
             if (class_exists('Spolek_Audit')) {
-                Spolek_Audit::log($id, null, 'archive_scan_attempt', [
+                Spolek_Audit::log($id, null, Spolek_Audit_Events::ARCHIVE_SCAN_ATTEMPT, [
                     'ok'    => (bool)($res['ok'] ?? false),
                     'error' => (string)($res['error'] ?? ''),
                 ]);
@@ -253,7 +253,7 @@ final class Spolek_Cron {
             } catch (\Throwable $e) {
                 $stats['errors']++;
                 if (class_exists('Spolek_Audit')) {
-                    Spolek_Audit::log($id, null, 'close_scan_error', [
+                    Spolek_Audit::log($id, null, Spolek_Audit_Events::CLOSE_SCAN_ERROR, [
                         'msg' => substr((string)$e->getMessage(), 0, 300),
                     ]);
                 }
@@ -334,7 +334,7 @@ final class Spolek_Cron {
     if (!empty($processed_at)) return;
 
     if ($attempt >= Spolek_Hlasovani_MVP::CLOSE_MAX_ATTEMPTS) {
-        Spolek_Audit::log($vote_post_id, null, 'cron_close_retry_give_up', [
+        Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_RETRY_GIVE_UP, [
             'attempt' => $attempt,
             'max'     => Spolek_Hlasovani_MVP::CLOSE_MAX_ATTEMPTS,
             'reason'  => $reason,
@@ -355,7 +355,7 @@ final class Spolek_Cron {
     wp_schedule_single_event($when, self::HOOK_CLOSE, [$vote_post_id]);
     update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_NEXT_RETRY, (string)$when);
 
-    Spolek_Audit::log($vote_post_id, null, 'cron_close_retry_scheduled', [
+    Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_RETRY_SCHEDULED, [
         'attempt' => $attempt,
         'when'    => $when,
         'delay'   => $delay,

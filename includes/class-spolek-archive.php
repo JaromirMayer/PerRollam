@@ -253,7 +253,7 @@ final class Spolek_Archive {
         if (!class_exists('ZipArchive')) {
             $err = 'ZipArchive not available on server';
             update_post_meta($vote_post_id, self::META_ARCHIVE_ERROR, $err);
-            if (class_exists('Spolek_Audit')) Spolek_Audit::log($vote_post_id, null, 'archive_failed', ['error' => $err]);
+            if (class_exists('Spolek_Audit')) Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::ARCHIVE_FAILED, ['error' => $err]);
             return ['ok' => false, 'error' => $err];
         }
 
@@ -262,7 +262,7 @@ final class Spolek_Archive {
         if ($ok !== true) {
             $err = 'cannot_create_zip';
             update_post_meta($vote_post_id, self::META_ARCHIVE_ERROR, $err);
-            if (class_exists('Spolek_Audit')) Spolek_Audit::log($vote_post_id, null, 'archive_failed', ['error' => $err, 'zip_code' => $ok]);
+            if (class_exists('Spolek_Audit')) Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::ARCHIVE_FAILED, ['error' => $err, 'zip_code' => $ok]);
             return ['ok' => false, 'error' => $err];
         }
 
@@ -339,7 +339,7 @@ final class Spolek_Archive {
             @unlink($path);
             $err = 'zip_write_failed';
             update_post_meta($vote_post_id, self::META_ARCHIVE_ERROR, $err);
-            if (class_exists('Spolek_Audit')) Spolek_Audit::log($vote_post_id, null, 'archive_failed', ['error' => $err]);
+            if (class_exists('Spolek_Audit')) Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::ARCHIVE_FAILED, ['error' => $err]);
             return ['ok' => false, 'error' => $err];
         }
 
@@ -367,7 +367,7 @@ final class Spolek_Archive {
         ]);
 
         if (class_exists('Spolek_Audit')) {
-            Spolek_Audit::log($vote_post_id, null, 'archive_created', [
+            Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::ARCHIVE_CREATED, [
                 'file'   => $file,
                 'bytes'  => (int) filesize($path),
                 'sha256' => $sha,

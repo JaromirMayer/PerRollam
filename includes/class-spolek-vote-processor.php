@@ -10,48 +10,8 @@ final class Spolek_Vote_Processor {
 
     /** Reminder 48/24. */
     public static function reminder(int $vote_post_id, string $type): void {
-        $vote_post_id = (int)$vote_post_id;
-        $type = (string)$type;
-
-        $post = get_post($vote_post_id);
-        if (!$post || $post->post_type !== Spolek_Hlasovani_MVP::CPT) return;
-
-        [$start_ts, $end_ts, $text] = Spolek_Hlasovani_MVP::get_vote_meta($vote_post_id);
-
-        if (Spolek_Hlasovani_MVP::get_status((int)$start_ts, (int)$end_ts) !== 'open') return;
-
-        $link = Spolek_Hlasovani_MVP::vote_detail_url($vote_post_id);
-        $subject = ($type === 'reminder48')
-            ? 'Připomínka: 48 hodin do konce hlasování – ' . $post->post_title
-            : 'Připomínka: 24 hodin do konce hlasování – ' . $post->post_title;
-
-        $members = Spolek_Hlasovani_MVP::get_members();
-        if (class_exists('Spolek_Audit')) {
-            Spolek_Audit::log($vote_post_id, null, 'cron_reminder_sending', [
-                'members' => is_array($members) ? count($members) : 0,
-                'type'    => $type,
-            ]);
-        }
-
-        foreach ((array)$members as $u) {
-            $uid = (int)($u->ID ?? 0);
-            if ($uid <= 0) continue;
-
-            // používáme centrální tabulku hlasů
-            $already = class_exists('Spolek_Votes')
-                ? Spolek_Votes::has_user_voted($vote_post_id, $uid)
-                : Spolek_Hlasovani_MVP::user_has_voted($vote_post_id, $uid);
-
-            if ($already) continue;
-
-            $body = "Připomínka hlasování per rollam.\n\n"
-                  . "Název: {$post->post_title}\n"
-                  . "Odkaz: $link\n"
-                  . "Deadline: " . wp_date('j.n.Y H:i', (int)$end_ts, wp_timezone()) . "\n\n"
-                  . "Plné znění návrhu:\n"
-                  . $text . "\n";
-
-            Spolek_Mailer::send_member_mail($vote_post_id, $u, $type, $subject, $body);
+        if (class_exists('Spolek_Mailer')) {
+            Spolek_Mailer::send_reminder((int)$vote_post_id, (string)$type);
         }
     }
 
@@ -106,23 +66,30 @@ final class Spolek_Vote_Processor {
             update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_RESULT_EXPLAIN, $eval['explain']);
             update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_RESULT_ADOPTED, $eval['adopted'] ? '1' : '0');
 
-            $pdf_path = Spolek_Hlasovani_MVP::generate_pdf_minutes($vote_post_id, $map, $text, (int)$start_ts, (int)$end_ts);
+            $pdf_path = class_exists('Spolek_PDF_Service')
+                ? Spolek_PDF_Service::generate_pdf_minutes($vote_post_id, $map, $text, (int)$start_ts, (int)$end_ts)
+                : Spolek_Hlasovani_MVP::generate_pdf_minutes($vote_post_id, $map, $text, (int)$start_ts, (int)$end_ts);
 
             if ($pdf_path && file_exists($pdf_path)) {
                 if (class_exists('Spolek_Audit')) {
-                    Spolek_Audit::log($vote_post_id, null, 'pdf_generated', [
+                    Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::PDF_GENERATED, [
                         'pdf'   => basename($pdf_path),
                         'bytes' => (int) filesize($pdf_path),
                     ]);
                 }
             } else {
                 if (class_exists('Spolek_Audit')) {
-                    Spolek_Audit::log($vote_post_id, null, 'pdf_generation_failed', []);
+                    Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::PDF_GENERATION_FAILED, []);
                 }
             }
+            if (class_exists("Spolek_Mailer")) {
+                // tichý režim: NEodesílá e-maily, jen loguje do auditu (+ do mail logu pro archiv mail_log.csv)
+                Spolek_Mailer::send_result($vote_post_id, (array)$map, (array)$eval, (string)$text, (int)$start_ts, (int)$end_ts, $pdf_path ?: null, true);
+            }
+
 
             if (class_exists('Spolek_Audit')) {
-                Spolek_Audit::log($vote_post_id, null, 'cron_close_silent_done', [
+                Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_SILENT_DONE, [
                     'attempt' => (int)$attempt,
                 ]);
             }
@@ -134,7 +101,7 @@ final class Spolek_Vote_Processor {
                 if (!(is_array($res) && !empty($res['ok']))) {
                     $err = is_array($res) ? (string)($res['error'] ?? 'archive_failed') : 'archive_failed';
                     if (class_exists('Spolek_Audit')) {
-                        Spolek_Audit::log($vote_post_id, null, 'archive_auto_failed', ['error' => $err]);
+                    Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::ARCHIVE_AUTO_FAILED, ['error' => $err]);
                     }
                 }
             }
@@ -148,7 +115,7 @@ final class Spolek_Vote_Processor {
             update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_LAST_ERROR, $msg);
 
             if (class_exists('Spolek_Audit')) {
-                Spolek_Audit::log($vote_post_id, null, 'cron_close_silent_exception', [
+                Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_SILENT_EXCEPTION, [
                     'msg'  => $msg,
                     'file' => basename((string)$e->getFile()),
                     'line' => (int)$e->getLine(),
@@ -175,7 +142,7 @@ final class Spolek_Vote_Processor {
         $processed_at = get_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT, true);
         if (!empty($processed_at)) {
             if (class_exists('Spolek_Audit')) {
-                Spolek_Audit::log($vote_post_id, null, 'cron_close_skip_processed', [
+                Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_SKIP_PROCESSED, [
                     'processed_at' => $processed_at,
                 ]);
             }
@@ -185,7 +152,7 @@ final class Spolek_Vote_Processor {
         $lock_token = self::acquire_close_lock($vote_post_id, 600);
         if (!$lock_token) {
             if (class_exists('Spolek_Audit')) {
-                Spolek_Audit::log($vote_post_id, null, 'cron_close_lock_busy', ['now' => time()]);
+                Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_LOCK_BUSY, ['now' => time()]);
             }
             if (!wp_next_scheduled(Spolek_Config::HOOK_CLOSE, [$vote_post_id])) {
                 wp_schedule_single_event(time() + 120, Spolek_Config::HOOK_CLOSE, [$vote_post_id]);
@@ -194,7 +161,7 @@ final class Spolek_Vote_Processor {
         }
 
         if (class_exists('Spolek_Audit')) {
-            Spolek_Audit::log($vote_post_id, null, 'cron_close_start', ['now' => time()]);
+            Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_START, ['now' => time()]);
         }
 
         $attempt = 0;
@@ -203,7 +170,7 @@ final class Spolek_Vote_Processor {
             [$start_ts, $end_ts, $text] = Spolek_Hlasovani_MVP::get_vote_meta($vote_post_id);
 
             if (class_exists('Spolek_Audit')) {
-                Spolek_Audit::log($vote_post_id, null, 'cron_close_called', [
+                Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_CALLED, [
                     'start_ts' => (int)$start_ts,
                     'end_ts'   => (int)$end_ts,
                     'now'      => time(),
@@ -216,7 +183,7 @@ final class Spolek_Vote_Processor {
                 wp_schedule_single_event(((int)$end_ts) + 60, Spolek_Config::HOOK_CLOSE, [$vote_post_id]);
 
                 if (class_exists('Spolek_Audit')) {
-                    Spolek_Audit::log($vote_post_id, null, 'cron_close_rescheduled', [
+                    Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_RESCHEDULED, [
                         'now'    => $now,
                         'end_ts' => (int)$end_ts,
                     ]);
@@ -227,7 +194,7 @@ final class Spolek_Vote_Processor {
             $status_now = Spolek_Hlasovani_MVP::get_status((int)$start_ts, (int)$end_ts);
             if ($status_now !== 'closed') {
                 if (class_exists('Spolek_Audit')) {
-                    Spolek_Audit::log($vote_post_id, null, 'cron_close_skip_not_closed', [
+                    Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_SKIP_NOT_CLOSED, [
                         'status' => $status_now,
                         'now'    => time(),
                         'end_ts' => (int)$end_ts,
@@ -251,95 +218,35 @@ final class Spolek_Vote_Processor {
             update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_RESULT_EXPLAIN, $eval['explain']);
             update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_RESULT_ADOPTED, $eval['adopted'] ? '1' : '0');
 
-            $link = Spolek_Hlasovani_MVP::vote_detail_url($vote_post_id);
-            $subject = 'Výsledek hlasování: ' . $post->post_title;
-
-            $body = "Hlasování per rollam bylo ukončeno.\n\n"
-                  . "Název: {$post->post_title}\n"
-                  . "Odkaz: $link\n"
-                  . "Ukončeno: " . wp_date('j.n.Y H:i', (int)$end_ts, wp_timezone()) . "\n\n"
-                  . "Výsledek (počty hlasů):\n"
-                  . "ANO: {$map['ANO']}\n"
-                  . "NE: {$map['NE']}\n"
-                  . "ZDRŽEL SE: {$map['ZDRZEL']}\n\n"
-                  . "\nVyhodnocení: " . $eval['label'] . "\n"
-                  . $eval['explain'] . "\n"
-                  . "Plné znění návrhu:\n"
-                  . $text . "\n";
-
-            $pdf_path = Spolek_Hlasovani_MVP::generate_pdf_minutes($vote_post_id, $map, $text, (int)$start_ts, (int)$end_ts);
-            $attachments = [];
+            $pdf_path = class_exists('Spolek_PDF_Service')
+                ? Spolek_PDF_Service::generate_pdf_minutes($vote_post_id, $map, $text, (int)$start_ts, (int)$end_ts)
+                : Spolek_Hlasovani_MVP::generate_pdf_minutes($vote_post_id, $map, $text, (int)$start_ts, (int)$end_ts);
 
             if ($pdf_path && file_exists($pdf_path)) {
-                $attachments[] = $pdf_path;
                 if (class_exists('Spolek_Audit')) {
-                    Spolek_Audit::log($vote_post_id, null, 'pdf_generated', [
+                    Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::PDF_GENERATED, [
                         'pdf'   => basename($pdf_path),
                         'bytes' => (int) filesize($pdf_path),
                     ]);
                 }
             } else {
                 if (class_exists('Spolek_Audit')) {
-                    Spolek_Audit::log($vote_post_id, null, 'pdf_generated', [
-                        'pdf'   => null,
-                        'error' => 'pdf not generated',
+                    Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::PDF_GENERATION_FAILED, [
+                        'error' => 'pdf_not_generated',
                     ]);
                 }
             }
 
-            $sent = 0; $skipped = 0; $failed = 0; $no_email = 0; $total = 0;
-            $members = Spolek_Hlasovani_MVP::get_members();
+            $stats_mail = class_exists('Spolek_Mailer')
+                ? Spolek_Mailer::send_result($vote_post_id, (array)$map, (array)$eval, (string)$text, (int)$start_ts, (int)$end_ts, $pdf_path ?: null, false)
+                : ['failed' => 0];
 
-            if (class_exists('Spolek_Audit')) {
-                Spolek_Audit::log($vote_post_id, null, 'result_mail_batch_start', [
-                    'members' => is_array($members) ? count($members) : 0,
-                    'has_pdf' => !empty($attachments) ? 1 : 0,
-                ]);
-            }
-
-            foreach ((array)$members as $u) {
-                $total++;
-
-                $exp = time() + (30 * DAY_IN_SECONDS);
-                $uid = (int) $u->ID;
-                $sig = Spolek_Hlasovani_MVP::member_pdf_sig($uid, $vote_post_id, $exp);
-
-                $landing = trailingslashit(home_url('/clenove/stazeni-zapisu/'));
-                $pdf_link = add_query_arg([
-                    'vote_post_id' => $vote_post_id,
-                    'uid'          => $uid,
-                    'exp'          => $exp,
-                    'sig'          => $sig,
-                ], $landing);
-
-                $body_with_link = $body
-                    . "\n\nZápis PDF ke stažení (vyžaduje přihlášení):\n<"
-                    . $pdf_link
-                    . ">\n";
-
-                $mail_status = Spolek_Mailer::send_member_mail($vote_post_id, $u, 'result', $subject, $body_with_link, $attachments);
-
-                if ($mail_status === 'sent') $sent++;
-                elseif ($mail_status === 'skip') $skipped++;
-                elseif ($mail_status === 'no_email') $no_email++;
-                else $failed++;
-            }
-
-            if (class_exists('Spolek_Audit')) {
-                Spolek_Audit::log($vote_post_id, null, 'result_mail_batch_done', [
-                    'total'    => (int)$total,
-                    'sent'     => (int)$sent,
-                    'skip'     => (int)$skipped,
-                    'no_email' => (int)$no_email,
-                    'failed'   => (int)$failed,
-                    'has_pdf'  => !empty($attachments) ? 1 : 0,
-                ]);
-            }
-
-            if ($failed > 0) {
+            if ((int)($stats_mail['failed'] ?? 0) > 0) {
+                $failed = (int)($stats_mail['failed'] ?? 0);
                 update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_LAST_ERROR, "result mails failed: $failed");
                 throw new \RuntimeException("result mails failed: $failed");
             }
+
 
             update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT, (string) time());
 
@@ -349,7 +256,7 @@ final class Spolek_Vote_Processor {
                 if (!(is_array($res) && !empty($res['ok']))) {
                     $err = is_array($res) ? (string)($res['error'] ?? 'archive_failed') : 'archive_failed';
                     if (class_exists('Spolek_Audit')) {
-                        Spolek_Audit::log($vote_post_id, null, 'archive_auto_failed', ['error' => $err]);
+                        Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::ARCHIVE_AUTO_FAILED, ['error' => $err]);
                     }
                 }
             }
@@ -363,7 +270,7 @@ final class Spolek_Vote_Processor {
             update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_LAST_ERROR, $msg);
 
             if (class_exists('Spolek_Audit')) {
-                Spolek_Audit::log($vote_post_id, null, 'cron_close_exception', [
+                Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_EXCEPTION, [
                     'attempt' => (int)$attempt,
                     'message' => $msg,
                     'code'    => (int)$e->getCode(),
@@ -444,7 +351,7 @@ final class Spolek_Vote_Processor {
 
         if ($attempt >= Spolek_Hlasovani_MVP::CLOSE_MAX_ATTEMPTS) {
             if (class_exists('Spolek_Audit')) {
-                Spolek_Audit::log($vote_post_id, null, 'cron_close_retry_give_up', [
+                Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_RETRY_GIVE_UP, [
                     'attempt' => $attempt,
                     'max'     => Spolek_Hlasovani_MVP::CLOSE_MAX_ATTEMPTS,
                     'reason'  => $reason,
@@ -467,7 +374,7 @@ final class Spolek_Vote_Processor {
         update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_NEXT_RETRY, (string)$when);
 
         if (class_exists('Spolek_Audit')) {
-            Spolek_Audit::log($vote_post_id, null, 'cron_close_retry_scheduled', [
+            Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_RETRY_SCHEDULED, [
                 'attempt' => $attempt,
                 'when'    => $when,
                 'delay'   => $delay,
