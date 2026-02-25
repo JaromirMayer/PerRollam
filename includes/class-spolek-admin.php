@@ -81,8 +81,19 @@ final class Spolek_Admin {
         foreach ($args as $k => $v) {
             $safe[(string)$k] = is_int($v) ? (string)$v : (string)$v;
         }
+
         wp_safe_redirect(add_query_arg($safe, $return_to));
         exit;
+    }
+
+
+    /**
+     * Redirect na detail hlasování (přidá parametr spolek_vote).
+     * @param array<string,string|int> $args
+     */
+    public static function redirect_detail_args(string $return_to, int $vote_post_id, array $args): void {
+        $args = array_merge(['spolek_vote' => (int)$vote_post_id], $args);
+        self::redirect_with_args($return_to, $args);
     }
 
     public static function redirect_detail_error(string $return_to, int $vote_post_id, string $msg): void {

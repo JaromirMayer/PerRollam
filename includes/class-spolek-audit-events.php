@@ -53,6 +53,8 @@ final class Spolek_Audit_Events {
     public const PURGE_MANUAL_START    = 'purge.manual.start';
     public const PURGE_MANUAL_DONE     = 'purge.manual.done';
     public const PURGE_MANUAL_FAIL     = 'purge.manual.fail';
+    public const PURGE_AUTO_DONE      = 'purge.auto.done';
+    public const PURGE_AUTO_FAIL      = 'purge.auto.fail';
     public const CLOSE_SCAN_MANUAL     = 'close.scan.manual';
     public const PURGE_SCAN_MANUAL     = 'purge.scan.manual';
     public const ARCHIVE_STORAGE_TEST  = 'archive.storage_test';

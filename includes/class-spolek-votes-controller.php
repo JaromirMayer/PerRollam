@@ -94,8 +94,7 @@ final class Spolek_Votes_Controller {
             Spolek_Mailer::send_announce($post_id);
         }
 
-        wp_safe_redirect(add_query_arg('created', '1', $return_to));
-        exit;
+        Spolek_Admin::redirect_with_args($return_to, ['created' => 1]);
     }
 
     public static function handle_cast_vote(): void {
@@ -165,8 +164,7 @@ final class Spolek_Votes_Controller {
             ]);
         }
 
-        wp_safe_redirect(add_query_arg(['spolek_vote' => $vote_post_id, 'voted' => '1'], $return_to));
-        exit;
+        Spolek_Admin::redirect_detail_args($return_to, $vote_post_id, ['voted' => 1]);
     }
 
     public static function handle_export_csv(): void {

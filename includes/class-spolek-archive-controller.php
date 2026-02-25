@@ -31,8 +31,7 @@ final class Spolek_Archive_Controller {
         }
 
         if (!class_exists('Spolek_Archive')) {
-            wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Archive.'), $return_to));
-            exit;
+            Spolek_Admin::redirect_with_error($return_to, 'Chybí Spolek_Archive.');
         }
 
         $res = Spolek_Archive::archive_vote($vote_post_id, true);
@@ -44,8 +43,7 @@ final class Spolek_Archive_Controller {
                     'file' => $file ?: null,
                 ]);
             }
-            wp_safe_redirect(add_query_arg('archived', '1', $return_to));
-            exit;
+            Spolek_Admin::redirect_with_args($return_to, ['archived' => 1]);
         }
 
         $err = is_array($res) ? (string)($res['error'] ?? 'Archivace selhala') : 'Archivace selhala';
@@ -54,8 +52,7 @@ final class Spolek_Archive_Controller {
                 'error' => $err,
             ]);
         }
-        wp_safe_redirect(add_query_arg('err', rawurlencode($err), $return_to));
-        exit;
+        Spolek_Admin::redirect_with_error($return_to, $err);
     }
 
     public static function handle_download_archive(): void {
@@ -101,8 +98,7 @@ final class Spolek_Archive_Controller {
         }
 
         if (!class_exists('Spolek_Archive')) {
-            wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Archive.'), $return_to));
-            exit;
+            Spolek_Admin::redirect_with_error($return_to, 'Chybí Spolek_Archive.');
         }
 
         $res = Spolek_Archive::purge_vote($vote_post_id);
@@ -111,8 +107,7 @@ final class Spolek_Archive_Controller {
             if (class_exists('Spolek_Audit')) {
                 Spolek_Audit::log($vote_post_id, get_current_user_id(), Spolek_Audit_Events::PURGE_MANUAL_DONE, []);
             }
-            wp_safe_redirect(add_query_arg('purged', '1', $return_to));
-            exit;
+            Spolek_Admin::redirect_with_args($return_to, ['purged' => 1]);
         }
 
         $err = is_array($res) ? (string)($res['error'] ?? 'Purge selhal') : 'Purge selhal';
@@ -121,8 +116,7 @@ final class Spolek_Archive_Controller {
                 'error' => $err,
             ]);
         }
-        wp_safe_redirect(add_query_arg('err', rawurlencode($err), $return_to));
-        exit;
+        Spolek_Admin::redirect_with_error($return_to, $err);
     }
 
     public static function handle_test_archive_storage(): void {
@@ -132,8 +126,7 @@ final class Spolek_Archive_Controller {
         $return_to = Spolek_Admin::get_return_to(Spolek_Admin::default_return_to());
 
         if (!class_exists('Spolek_Archive') || !method_exists('Spolek_Archive', 'test_write')) {
-            wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Archive::test_write.'), $return_to));
-            exit;
+            Spolek_Admin::redirect_with_error($return_to, 'Chybí Spolek_Archive::test_write.');
         }
 
         $res = [];
@@ -160,8 +153,7 @@ final class Spolek_Archive_Controller {
             ]);
         }
 
-        wp_safe_redirect(add_query_arg($args, $return_to));
-        exit;
+        Spolek_Admin::redirect_with_args($return_to, $args);
     }
 
     public static function handle_run_close_scan(): void {
@@ -171,15 +163,13 @@ final class Spolek_Archive_Controller {
         $return_to = Spolek_Admin::get_return_to(Spolek_Admin::default_return_to());
 
         if (!class_exists('Spolek_Cron') || !method_exists('Spolek_Cron', 'close_scan')) {
-            wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Cron::close_scan.'), $return_to));
-            exit;
+            Spolek_Admin::redirect_with_error($return_to, 'Chybí Spolek_Cron::close_scan.');
         }
 
         try {
             $stats = Spolek_Cron::close_scan();
         } catch (Throwable $e) {
-            wp_safe_redirect(add_query_arg('err', rawurlencode('Close scan selhal: ' . $e->getMessage()), $return_to));
-            exit;
+            Spolek_Admin::redirect_with_error($return_to, 'Close scan selhal: ' . $e->getMessage());
         }
 
         $msg = 'Dohnání uzávěrek: zpracováno ' . (int)($stats['total'] ?? 0)
@@ -196,8 +186,7 @@ final class Spolek_Archive_Controller {
             ]);
         }
 
-        wp_safe_redirect(add_query_arg('notice', rawurlencode($msg), $return_to));
-        exit;
+        Spolek_Admin::redirect_with_notice($return_to, $msg);
     }
 
     public static function handle_run_purge_scan(): void {
@@ -207,13 +196,11 @@ final class Spolek_Archive_Controller {
         $return_to = Spolek_Admin::get_return_to(Spolek_Admin::default_return_to());
 
         if (!class_exists('Spolek_Cron') || !method_exists('Spolek_Cron', 'purge_scan')) {
-            wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Cron::purge_scan.'), $return_to));
-            exit;
+            Spolek_Admin::redirect_with_error($return_to, 'Chybí Spolek_Cron::purge_scan.');
         }
 
         if (!class_exists('Spolek_Archive')) {
-            wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Archive.'), $return_to));
-            exit;
+            Spolek_Admin::redirect_with_error($return_to, 'Chybí Spolek_Archive.');
         }
 
         Spolek_Archive::ensure_storage();
@@ -229,8 +216,7 @@ final class Spolek_Archive_Controller {
         try {
             Spolek_Cron::purge_scan();
         } catch (Throwable $e) {
-            wp_safe_redirect(add_query_arg('err', rawurlencode('Purge scan selhal: ' . $e->getMessage()), $return_to));
-            exit;
+            Spolek_Admin::redirect_with_error($return_to, 'Purge scan selhal: ' . $e->getMessage());
         }
 
         $after = $before;
@@ -249,10 +235,9 @@ final class Spolek_Archive_Controller {
             ]);
         }
 
-        wp_safe_redirect(add_query_arg([
+        Spolek_Admin::redirect_with_args($return_to, [
             'purge_scan' => '1',
             'purge_scan_purged' => (string)$delta,
-        ], $return_to));
-        exit;
+        ]);
     }
 }

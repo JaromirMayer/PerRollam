@@ -387,8 +387,18 @@ final class Spolek_Archive {
     public static function purge_vote(int $vote_post_id): array {
         $vote_post_id = (int)$vote_post_id;
 
+        $is_cron = function_exists('wp_doing_cron') ? wp_doing_cron() : (defined('DOING_CRON') && DOING_CRON);
+
         $post = get_post($vote_post_id);
-        if (!$post) return ['ok' => false, 'error' => 'vote_not_found'];
+        if (!$post) {
+            if ($is_cron && class_exists('Spolek_Audit')) {
+                Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::PURGE_AUTO_FAIL, [
+                    'vote_post_id' => $vote_post_id,
+                    'error' => 'vote_not_found',
+                ]);
+            }
+            return ['ok' => false, 'error' => 'vote_not_found'];
+        }
 
         // Musí existovat archiv (meta nebo index)
         $file = (string) get_post_meta($vote_post_id, self::META_ARCHIVE_FILE, true);
@@ -398,7 +408,15 @@ final class Spolek_Archive {
         }
         $file = basename($file);
 
-        if ($file === '') return ['ok' => false, 'error' => 'archive_missing'];
+        if ($file === '') {
+            if ($is_cron && class_exists('Spolek_Audit')) {
+                Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::PURGE_AUTO_FAIL, [
+                    'vote_post_id' => $vote_post_id,
+                    'error' => 'archive_missing',
+                ]);
+            }
+            return ['ok' => false, 'error' => 'archive_missing'];
+        }
 
         $storage_hint = (string) get_post_meta($vote_post_id, self::META_ARCHIVE_STORAGE, true);
         if ($storage_hint === '') {
@@ -406,7 +424,16 @@ final class Spolek_Archive {
             $storage_hint = (string)($it['storage'] ?? '');
         }
         $loc = self::locate($file, $storage_hint !== '' ? $storage_hint : null);
-        if (!$loc || !file_exists($loc['path'])) return ['ok' => false, 'error' => 'archive_file_missing'];
+        if (!$loc || !file_exists($loc['path'])) {
+            if ($is_cron && class_exists('Spolek_Audit')) {
+                Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::PURGE_AUTO_FAIL, [
+                    'vote_post_id' => $vote_post_id,
+                    'file' => $file ?: null,
+                    'error' => 'archive_file_missing',
+                ]);
+            }
+            return ['ok' => false, 'error' => 'archive_file_missing'];
+        }
         $path = (string)$loc['path'];
 
         // Bezpečnost: ověření integrity archivu před mazáním z DB
@@ -417,6 +444,13 @@ final class Spolek_Archive {
         }
         $actual_sha = hash_file('sha256', $path);
         if ($expected_sha !== '' && !hash_equals($expected_sha, $actual_sha)) {
+            if ($is_cron && class_exists('Spolek_Audit')) {
+                Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::PURGE_AUTO_FAIL, [
+                    'vote_post_id' => $vote_post_id,
+                    'file' => $file ?: null,
+                    'error' => 'archive_sha_mismatch',
+                ]);
+            }
             return ['ok' => false, 'error' => 'archive_sha_mismatch'];
         }
 
@@ -452,6 +486,16 @@ final class Spolek_Archive {
 
         // Index: označit purged_at
         self::mark_purged_in_index($vote_post_id);
+
+        if ($is_cron && class_exists('Spolek_Audit')) {
+            Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::PURGE_AUTO_DONE, [
+                'vote_post_id' => $vote_post_id,
+                'file' => $file ?: null,
+                'deleted_votes' => (int)$deleted_votes,
+                'deleted_mail'  => (int)$deleted_mail,
+                'deleted_audit' => (int)$deleted_audit,
+            ]);
+        }
 
         return [
             'ok' => true,
