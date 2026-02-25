@@ -23,9 +23,9 @@ final class Spolek_Vote_Processor {
         $vote_post_id = (int)$vote_post_id;
 
         $post = get_post($vote_post_id);
-        if (!$post || $post->post_type !== Spolek_Hlasovani_MVP::CPT) return;
+        if (!$post || $post->post_type !== Spolek_Config::CPT) return;
 
-        $processed_at = get_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT, true);
+        $processed_at = get_post_meta($vote_post_id, Spolek_Config::META_CLOSE_PROCESSED_AT, true);
         if (!empty($processed_at)) {
             // hotovo -> pro jistotu vyčistíme plánované hooky (duplicitní běhy)
             if (class_exists('Spolek_Cron')) {
@@ -35,8 +35,8 @@ final class Spolek_Vote_Processor {
         }
 
         // Stop endless loops: max pokusů = give up
-        $max = (int) Spolek_Hlasovani_MVP::CLOSE_MAX_ATTEMPTS;
-        $attempts_so_far = (int) get_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_ATTEMPTS, true);
+        $max = (int) Spolek_Config::CLOSE_MAX_ATTEMPTS;
+        $attempts_so_far = (int) get_post_meta($vote_post_id, Spolek_Config::META_CLOSE_ATTEMPTS, true);
         if ($attempts_so_far >= $max) {
             update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_GAVE_UP_AT, (string) time());
             if (class_exists('Spolek_Audit')) {
@@ -60,7 +60,7 @@ final class Spolek_Vote_Processor {
         $attempt = 0;
 
         try {
-            [$start_ts, $end_ts, $text] = Spolek_Hlasovani_MVP::get_vote_meta($vote_post_id);
+            [$start_ts, $end_ts, $text] = Spolek_Vote_Service::get_vote_meta($vote_post_id);
 
             $now = time();
             if ($now < (int)$end_ts) {
@@ -69,23 +69,23 @@ final class Spolek_Vote_Processor {
                 return;
             }
 
-            $status_now = Spolek_Hlasovani_MVP::get_status((int)$start_ts, (int)$end_ts);
+            $status_now = Spolek_Vote_Service::get_status((int)$start_ts, (int)$end_ts);
             if ($status_now !== 'closed') return;
 
-            $attempt = (int) get_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_ATTEMPTS, true);
+            $attempt = (int) get_post_meta($vote_post_id, Spolek_Config::META_CLOSE_ATTEMPTS, true);
             $attempt++;
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_ATTEMPTS, (string)$attempt);
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_STARTED_AT, (string) time());
+            update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_ATTEMPTS, (string)$attempt);
+            update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_STARTED_AT, (string) time());
 
             $map = class_exists('Spolek_Votes')
                 ? Spolek_Votes::get_counts($vote_post_id)
                 : ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
 
-            $eval = Spolek_Hlasovani_MVP::evaluate_vote($vote_post_id, $map);
+            $eval = Spolek_Vote_Service::evaluate_vote($vote_post_id, $map);
 
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_RESULT_LABEL, $eval['label']);
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_RESULT_EXPLAIN, $eval['explain']);
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_RESULT_ADOPTED, $eval['adopted'] ? '1' : '0');
+            update_post_meta($vote_post_id, Spolek_Config::META_RESULT_LABEL, $eval['label']);
+            update_post_meta($vote_post_id, Spolek_Config::META_RESULT_EXPLAIN, $eval['explain']);
+            update_post_meta($vote_post_id, Spolek_Config::META_RESULT_ADOPTED, $eval['adopted'] ? '1' : '0');
 
             $pdf_path = class_exists('Spolek_PDF_Service')
                 ? Spolek_PDF_Service::generate_pdf_minutes($vote_post_id, $map, $text, (int)$start_ts, (int)$end_ts)
@@ -115,7 +115,7 @@ final class Spolek_Vote_Processor {
                 ]);
             }
 
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT, (string) time());
+            update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_PROCESSED_AT, (string) time());
 
             // po uzávěrce už nechceme žádné další close/reminder eventy
             if (class_exists('Spolek_Cron')) {
@@ -132,13 +132,13 @@ final class Spolek_Vote_Processor {
                 }
             }
 
-            delete_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_STARTED_AT);
-            delete_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_LAST_ERROR);
-            delete_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_NEXT_RETRY);
+            delete_post_meta($vote_post_id, Spolek_Config::META_CLOSE_STARTED_AT);
+            delete_post_meta($vote_post_id, Spolek_Config::META_CLOSE_LAST_ERROR);
+            delete_post_meta($vote_post_id, Spolek_Config::META_CLOSE_NEXT_RETRY);
 
         } catch (\Throwable $e) {
             $msg = substr((string)$e->getMessage(), 0, 500);
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_LAST_ERROR, $msg);
+            update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_LAST_ERROR, $msg);
 
             if (class_exists('Spolek_Audit')) {
                 Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_SILENT_EXCEPTION, [
@@ -163,9 +163,9 @@ final class Spolek_Vote_Processor {
         $vote_post_id = (int)$vote_post_id;
 
         $post = get_post($vote_post_id);
-        if (!$post || $post->post_type !== Spolek_Hlasovani_MVP::CPT) return;
+        if (!$post || $post->post_type !== Spolek_Config::CPT) return;
 
-        $processed_at = get_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT, true);
+        $processed_at = get_post_meta($vote_post_id, Spolek_Config::META_CLOSE_PROCESSED_AT, true);
         if (!empty($processed_at)) {
             if (class_exists('Spolek_Audit')) {
                 Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_SKIP_PROCESSED, [
@@ -179,8 +179,8 @@ final class Spolek_Vote_Processor {
         }
 
         // Stop endless loops: max pokusů = give up
-        $max = (int) Spolek_Hlasovani_MVP::CLOSE_MAX_ATTEMPTS;
-        $attempts_so_far = (int) get_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_ATTEMPTS, true);
+        $max = (int) Spolek_Config::CLOSE_MAX_ATTEMPTS;
+        $attempts_so_far = (int) get_post_meta($vote_post_id, Spolek_Config::META_CLOSE_ATTEMPTS, true);
         if ($attempts_so_far >= $max) {
             update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_GAVE_UP_AT, (string) time());
             if (class_exists('Spolek_Audit')) {
@@ -211,7 +211,7 @@ final class Spolek_Vote_Processor {
         $attempt = 0;
 
         try {
-            [$start_ts, $end_ts, $text] = Spolek_Hlasovani_MVP::get_vote_meta($vote_post_id);
+            [$start_ts, $end_ts, $text] = Spolek_Vote_Service::get_vote_meta($vote_post_id);
 
             if (class_exists('Spolek_Audit')) {
                 Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_CALLED, [
@@ -235,7 +235,7 @@ final class Spolek_Vote_Processor {
                 return;
             }
 
-            $status_now = Spolek_Hlasovani_MVP::get_status((int)$start_ts, (int)$end_ts);
+            $status_now = Spolek_Vote_Service::get_status((int)$start_ts, (int)$end_ts);
             if ($status_now !== 'closed') {
                 if (class_exists('Spolek_Audit')) {
                     Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_SKIP_NOT_CLOSED, [
@@ -247,20 +247,20 @@ final class Spolek_Vote_Processor {
                 return;
             }
 
-            $attempt = (int) get_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_ATTEMPTS, true);
+            $attempt = (int) get_post_meta($vote_post_id, Spolek_Config::META_CLOSE_ATTEMPTS, true);
             $attempt++;
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_ATTEMPTS, (string)$attempt);
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_STARTED_AT, (string) time());
+            update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_ATTEMPTS, (string)$attempt);
+            update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_STARTED_AT, (string) time());
 
             $map = class_exists('Spolek_Votes')
                 ? Spolek_Votes::get_counts($vote_post_id)
                 : ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
 
-            $eval = Spolek_Hlasovani_MVP::evaluate_vote($vote_post_id, $map);
+            $eval = Spolek_Vote_Service::evaluate_vote($vote_post_id, $map);
 
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_RESULT_LABEL, $eval['label']);
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_RESULT_EXPLAIN, $eval['explain']);
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_RESULT_ADOPTED, $eval['adopted'] ? '1' : '0');
+            update_post_meta($vote_post_id, Spolek_Config::META_RESULT_LABEL, $eval['label']);
+            update_post_meta($vote_post_id, Spolek_Config::META_RESULT_EXPLAIN, $eval['explain']);
+            update_post_meta($vote_post_id, Spolek_Config::META_RESULT_ADOPTED, $eval['adopted'] ? '1' : '0');
 
             $pdf_path = class_exists('Spolek_PDF_Service')
                 ? Spolek_PDF_Service::generate_pdf_minutes($vote_post_id, $map, $text, (int)$start_ts, (int)$end_ts)
@@ -287,12 +287,12 @@ final class Spolek_Vote_Processor {
 
             if ((int)($stats_mail['failed'] ?? 0) > 0) {
                 $failed = (int)($stats_mail['failed'] ?? 0);
-                update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_LAST_ERROR, "result mails failed: $failed");
+                update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_LAST_ERROR, "result mails failed: $failed");
                 throw new \RuntimeException("result mails failed: $failed");
             }
 
 
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT, (string) time());
+            update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_PROCESSED_AT, (string) time());
 
             // po uzávěrce už nechceme žádné další close/reminder eventy
             if (class_exists('Spolek_Cron')) {
@@ -310,13 +310,13 @@ final class Spolek_Vote_Processor {
                 }
             }
 
-            delete_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_STARTED_AT);
-            delete_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_LAST_ERROR);
-            delete_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_NEXT_RETRY);
+            delete_post_meta($vote_post_id, Spolek_Config::META_CLOSE_STARTED_AT);
+            delete_post_meta($vote_post_id, Spolek_Config::META_CLOSE_LAST_ERROR);
+            delete_post_meta($vote_post_id, Spolek_Config::META_CLOSE_NEXT_RETRY);
 
         } catch (\Throwable $e) {
             $msg = substr((string)$e->getMessage(), 0, 500);
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_LAST_ERROR, $msg);
+            update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_LAST_ERROR, $msg);
 
             if (class_exists('Spolek_Audit')) {
                 Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_EXCEPTION, [
@@ -395,15 +395,15 @@ final class Spolek_Vote_Processor {
     }
 
     private static function schedule_close_retry(int $vote_post_id, int $attempt, string $reason): void {
-        $processed_at = get_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT, true);
+        $processed_at = get_post_meta($vote_post_id, Spolek_Config::META_CLOSE_PROCESSED_AT, true);
         if (!empty($processed_at)) return;
 
-        if ($attempt >= Spolek_Hlasovani_MVP::CLOSE_MAX_ATTEMPTS) {
+        if ($attempt >= Spolek_Config::CLOSE_MAX_ATTEMPTS) {
             update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_GAVE_UP_AT, (string) time());
             if (class_exists('Spolek_Audit')) {
                 Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_RETRY_GIVE_UP, [
                     'attempt' => $attempt,
-                    'max'     => Spolek_Hlasovani_MVP::CLOSE_MAX_ATTEMPTS,
+                    'max'     => Spolek_Config::CLOSE_MAX_ATTEMPTS,
                     'reason'  => $reason,
                 ]);
             }
@@ -416,12 +416,12 @@ final class Spolek_Vote_Processor {
 
         $next = wp_next_scheduled(Spolek_Config::HOOK_CLOSE, [$vote_post_id]);
         if ($next && $next > (time() + 10)) {
-            update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_NEXT_RETRY, (string)$next);
+            update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_NEXT_RETRY, (string)$next);
             return;
         }
 
         wp_schedule_single_event($when, Spolek_Config::HOOK_CLOSE, [$vote_post_id]);
-        update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_NEXT_RETRY, (string)$when);
+        update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_NEXT_RETRY, (string)$when);
 
         if (class_exists('Spolek_Audit')) {
             Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_RETRY_SCHEDULED, [

@@ -8,8 +8,8 @@ if (!defined('ABSPATH')) exit;
  */
 final class Spolek_PDF_Service {
 
-    private const META_PDF_PATH         = '_spolek_pdf_path';
-    private const META_PDF_GENERATED_AT = '_spolek_pdf_generated_at';
+    private const META_PDF_PATH         = Spolek_Config::META_PDF_PATH;
+    private const META_PDF_GENERATED_AT = Spolek_Config::META_PDF_GENERATED_AT;
 
     /**
      * HMAC podpis pro “member PDF” link.

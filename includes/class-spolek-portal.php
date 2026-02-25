@@ -11,6 +11,10 @@ final class Spolek_Portal {
     }
 
     public function shortcode($atts = [], $content = null): string {
+        if (class_exists('Spolek_Portal_Renderer') && method_exists('Spolek_Portal_Renderer', 'render_portal')) {
+            return (string) Spolek_Portal_Renderer::render_portal();
+        }
+        // fallback (starší build)
         if (class_exists('Spolek_Hlasovani_MVP') && method_exists('Spolek_Hlasovani_MVP', 'render_portal')) {
             return (string) Spolek_Hlasovani_MVP::render_portal();
         }

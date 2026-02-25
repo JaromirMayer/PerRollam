@@ -109,35 +109,35 @@ final class Spolek_Self_Heal {
         $limit = max(1, (int)$limit);
 
         // Vyloučíme případy, kdy už je dosažen max počet pokusů.
-        $max = (int) Spolek_Hlasovani_MVP::CLOSE_MAX_ATTEMPTS;
+        $max = (int) Spolek_Config::CLOSE_MAX_ATTEMPTS;
 
         $q = new WP_Query([
-            'post_type'      => Spolek_Hlasovani_MVP::CPT,
+            'post_type'      => Spolek_Config::CPT,
             'post_status'    => 'publish',
             'posts_per_page' => $limit,
             'orderby'        => 'meta_value_num',
-            'meta_key'       => '_spolek_end_ts',
+            'meta_key'       => Spolek_Config::META_END_TS,
             'order'          => 'ASC',
             'meta_query'     => [
                 [
-                    'key'     => '_spolek_end_ts',
+                    'key'     => Spolek_Config::META_END_TS,
                     'value'   => $now,
                     'compare' => '<',
                     'type'    => 'NUMERIC',
                 ],
                 [
-                    'key'     => Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT,
+                    'key'     => Spolek_Config::META_CLOSE_PROCESSED_AT,
                     'compare' => 'NOT EXISTS',
                 ],
                 // attempts: NOT EXISTS OR < max
                 [
                     'relation' => 'OR',
                     [
-                        'key'     => Spolek_Hlasovani_MVP::META_CLOSE_ATTEMPTS,
+                        'key'     => Spolek_Config::META_CLOSE_ATTEMPTS,
                         'compare' => 'NOT EXISTS',
                     ],
                     [
-                        'key'     => Spolek_Hlasovani_MVP::META_CLOSE_ATTEMPTS,
+                        'key'     => Spolek_Config::META_CLOSE_ATTEMPTS,
                         'value'   => $max,
                         'compare' => '<',
                         'type'    => 'NUMERIC',
@@ -173,7 +173,7 @@ final class Spolek_Self_Heal {
                 continue;
             }
 
-            $end_ts = (int) get_post_meta($id, '_spolek_end_ts', true);
+            $end_ts = (int) get_post_meta($id, Spolek_Config::META_END_TS, true);
             $age = ($end_ts > 0) ? max(0, $now - $end_ts) : 0;
             $silent = ($end_ts > 0 && $age > ((int)$silent_after_days * DAY_IN_SECONDS));
 

@@ -15,6 +15,8 @@ final class Spolek_Plugin {
      */
     private const DEPENDENCIES = [
         'includes/class-spolek-config.php',
+        'includes/class-spolek-vote-service.php',
+        'includes/class-spolek-admin.php',
         'includes/class-spolek-audit-events.php',
         'includes/class-spolek-audit.php',
         'includes/class-spolek-mailer.php',
@@ -24,6 +26,7 @@ final class Spolek_Plugin {
         'includes/class-spolek-self-heal.php',
         'includes/class-spolek-archive.php',
         'includes/class-spolek-pdf-service.php',
+        'includes/class-spolek-portal-renderer.php',
         'includes/class-spolek-legacy.php',
         'includes/class-spolek-votes-controller.php',
         'includes/class-spolek-archive-controller.php',
@@ -49,7 +52,10 @@ final class Spolek_Plugin {
         class_exists('Spolek_Cron') &&
         class_exists('Spolek_Archive') &&
         class_exists('Spolek_Hlasovani_MVP') &&
-        class_exists('Spolek_PDF_Service')
+        class_exists('Spolek_PDF_Service') &&
+        class_exists('Spolek_Admin') &&
+        class_exists('Spolek_Portal_Renderer') &&
+        class_exists('Spolek_Vote_Service')
     ) {
         return;
     }

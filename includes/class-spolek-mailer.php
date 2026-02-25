@@ -97,13 +97,13 @@ final class Spolek_Mailer {
         $vote_post_id = (int)$vote_post_id;
 
         $post = get_post($vote_post_id);
-        if (!$post || $post->post_type !== Spolek_Hlasovani_MVP::CPT) {
+        if (!$post || $post->post_type !== Spolek_Config::CPT) {
             return self::empty_stats();
         }
 
-        [$start_ts, $end_ts, $text] = Spolek_Hlasovani_MVP::get_vote_meta($vote_post_id);
+        [$start_ts, $end_ts, $text] = Spolek_Vote_Service::get_vote_meta($vote_post_id);
 
-        $link = Spolek_Hlasovani_MVP::vote_detail_url($vote_post_id);
+        $link = Spolek_Vote_Service::vote_detail_url($vote_post_id);
         $subject = 'Vyhlášeno hlasování: ' . $post->post_title;
 
         $body = "Bylo vyhlášeno hlasování per rollam.\n\n"
@@ -114,7 +114,7 @@ final class Spolek_Mailer {
               . "Plné znění návrhu:\n"
               . $text . "\n";
 
-        $members = (array) Spolek_Hlasovani_MVP::get_members();
+        $members = (array) Spolek_Vote_Service::get_members();
 
         self::audit_batch($vote_post_id, null, Spolek_Audit_Events::MAIL_BATCH_START, [
             'type'    => 'announce',
@@ -134,17 +134,17 @@ final class Spolek_Mailer {
         $type = (string)$type;
 
         $post = get_post($vote_post_id);
-        if (!$post || $post->post_type !== Spolek_Hlasovani_MVP::CPT) {
+        if (!$post || $post->post_type !== Spolek_Config::CPT) {
             return self::empty_stats();
         }
 
-        [$start_ts, $end_ts, $text] = Spolek_Hlasovani_MVP::get_vote_meta($vote_post_id);
+        [$start_ts, $end_ts, $text] = Spolek_Vote_Service::get_vote_meta($vote_post_id);
 
-        if (Spolek_Hlasovani_MVP::get_status((int)$start_ts, (int)$end_ts) !== 'open') {
+        if (Spolek_Vote_Service::get_status((int)$start_ts, (int)$end_ts) !== 'open') {
             return self::empty_stats();
         }
 
-        $link = Spolek_Hlasovani_MVP::vote_detail_url($vote_post_id);
+        $link = Spolek_Vote_Service::vote_detail_url($vote_post_id);
         $subject = ($type === 'reminder48')
             ? 'Připomínka: 48 hodin do konce hlasování – ' . $post->post_title
             : 'Připomínka: 24 hodin do konce hlasování – ' . $post->post_title;
@@ -156,7 +156,7 @@ final class Spolek_Mailer {
               . "Plné znění návrhu:\n"
               . $text . "\n";
 
-        $members = (array) Spolek_Hlasovani_MVP::get_members();
+        $members = (array) Spolek_Vote_Service::get_members();
 
         self::audit_batch($vote_post_id, null, Spolek_Audit_Events::MAIL_BATCH_START, [
             'type'    => $type,
@@ -206,11 +206,11 @@ final class Spolek_Mailer {
         $silent_mode = (bool)$silent_mode;
 
         $post = get_post($vote_post_id);
-        if (!$post || $post->post_type !== Spolek_Hlasovani_MVP::CPT) {
+        if (!$post || $post->post_type !== Spolek_Config::CPT) {
             return self::empty_stats();
         }
 
-        $link = Spolek_Hlasovani_MVP::vote_detail_url($vote_post_id);
+        $link = Spolek_Vote_Service::vote_detail_url($vote_post_id);
         $subject = 'Výsledek hlasování: ' . $post->post_title;
 
         $body_base = "Hlasování per rollam bylo ukončeno.\n\n"
@@ -232,7 +232,7 @@ final class Spolek_Mailer {
             $attachments[] = $pdf_path;
         }
 
-        $members = (array) Spolek_Hlasovani_MVP::get_members();
+        $members = (array) Spolek_Vote_Service::get_members();
 
         self::audit_batch(
             $vote_post_id,

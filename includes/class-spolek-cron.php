@@ -117,23 +117,23 @@ final class Spolek_Cron {
         if (!class_exists('Spolek_Archive') || !class_exists('Spolek_Hlasovani_MVP')) return;
 
         $now = time();
-        $max = (int) Spolek_Hlasovani_MVP::CLOSE_MAX_ATTEMPTS;
+        $max = (int) Spolek_Config::CLOSE_MAX_ATTEMPTS;
         $q = new WP_Query([
-            'post_type'      => Spolek_Hlasovani_MVP::CPT,
+            'post_type'      => Spolek_Config::CPT,
             'post_status'    => 'publish',
             'posts_per_page' => 10,
             'orderby'        => 'meta_value_num',
-            'meta_key'       => Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT,
+            'meta_key'       => Spolek_Config::META_CLOSE_PROCESSED_AT,
             'order'          => 'ASC',
             'meta_query'     => [
                 [
-                    'key'     => '_spolek_end_ts',
+                    'key'     => Spolek_Config::META_END_TS,
                     'value'   => $now,
                     'compare' => '<',
                     'type'    => 'NUMERIC',
                 ],
                 [
-                    'key'     => Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT,
+                    'key'     => Spolek_Config::META_CLOSE_PROCESSED_AT,
                     'compare' => 'EXISTS',
                 ],
                 [
@@ -176,21 +176,21 @@ final class Spolek_Cron {
         $threshold = time() - (30 * DAY_IN_SECONDS);
 
         $q = new WP_Query([
-            'post_type'      => Spolek_Hlasovani_MVP::CPT,
+            'post_type'      => Spolek_Config::CPT,
             'post_status'    => 'publish',
             'posts_per_page' => 10,
             'orderby'        => 'meta_value_num',
-            'meta_key'       => '_spolek_end_ts',
+            'meta_key'       => Spolek_Config::META_END_TS,
             'order'          => 'ASC',
             'meta_query'     => [
                 [
-                    'key'     => '_spolek_end_ts',
+                    'key'     => Spolek_Config::META_END_TS,
                     'value'   => $threshold,
                     'compare' => '<',
                     'type'    => 'NUMERIC',
                 ],
                 [
-                    'key'     => Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT,
+                    'key'     => Spolek_Config::META_CLOSE_PROCESSED_AT,
                     'compare' => 'EXISTS',
                 ],
                 [
@@ -238,32 +238,32 @@ final class Spolek_Cron {
 
         $now = time();
         $q = new WP_Query([
-            'post_type'      => Spolek_Hlasovani_MVP::CPT,
+            'post_type'      => Spolek_Config::CPT,
             'post_status'    => 'publish',
             'posts_per_page' => max(1, (int)$limit),
             'orderby'        => 'meta_value_num',
-            'meta_key'       => '_spolek_end_ts',
+            'meta_key'       => Spolek_Config::META_END_TS,
             'order'          => 'ASC',
             'meta_query'     => [
                 [
-                    'key'     => '_spolek_end_ts',
+                    'key'     => Spolek_Config::META_END_TS,
                     'value'   => $now,
                     'compare' => '<',
                     'type'    => 'NUMERIC',
                 ],
                 [
-                    'key'     => Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT,
+                    'key'     => Spolek_Config::META_CLOSE_PROCESSED_AT,
                     'compare' => 'NOT EXISTS',
                 ],
                 // attempts: NOT EXISTS OR < max
                 [
                     'relation' => 'OR',
                     [
-                        'key'     => Spolek_Hlasovani_MVP::META_CLOSE_ATTEMPTS,
+                        'key'     => Spolek_Config::META_CLOSE_ATTEMPTS,
                         'compare' => 'NOT EXISTS',
                     ],
                     [
-                        'key'     => Spolek_Hlasovani_MVP::META_CLOSE_ATTEMPTS,
+                        'key'     => Spolek_Config::META_CLOSE_ATTEMPTS,
                         'value'   => $max,
                         'compare' => '<',
                         'type'    => 'NUMERIC',
@@ -284,10 +284,10 @@ final class Spolek_Cron {
         foreach ($ids as $id) {
             $id = (int)$id;
 
-            $processed_at = get_post_meta($id, Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT, true);
+            $processed_at = get_post_meta($id, Spolek_Config::META_CLOSE_PROCESSED_AT, true);
             if (!empty($processed_at)) continue;
 
-            $end_ts = (int) get_post_meta($id, '_spolek_end_ts', true);
+            $end_ts = (int) get_post_meta($id, Spolek_Config::META_END_TS, true);
             $age = ($end_ts > 0) ? max(0, $now - $end_ts) : 0;
 
             $stats['total']++;
@@ -381,13 +381,13 @@ final class Spolek_Cron {
 }
 
     private static function schedule_close_retry(int $vote_post_id, int $attempt, string $reason): void {
-    $processed_at = get_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT, true);
+    $processed_at = get_post_meta($vote_post_id, Spolek_Config::META_CLOSE_PROCESSED_AT, true);
     if (!empty($processed_at)) return;
 
-    if ($attempt >= Spolek_Hlasovani_MVP::CLOSE_MAX_ATTEMPTS) {
+    if ($attempt >= Spolek_Config::CLOSE_MAX_ATTEMPTS) {
         Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_RETRY_GIVE_UP, [
             'attempt' => $attempt,
-            'max'     => Spolek_Hlasovani_MVP::CLOSE_MAX_ATTEMPTS,
+            'max'     => Spolek_Config::CLOSE_MAX_ATTEMPTS,
             'reason'  => $reason,
         ]);
         return;
@@ -399,12 +399,12 @@ final class Spolek_Cron {
 
     $next = wp_next_scheduled(self::HOOK_CLOSE, [$vote_post_id]);
     if ($next && $next > (time() + 10)) {
-        update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_NEXT_RETRY, (string)$next);
+        update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_NEXT_RETRY, (string)$next);
         return;
     }
 
     wp_schedule_single_event($when, self::HOOK_CLOSE, [$vote_post_id]);
-    update_post_meta($vote_post_id, Spolek_Hlasovani_MVP::META_CLOSE_NEXT_RETRY, (string)$when);
+    update_post_meta($vote_post_id, Spolek_Config::META_CLOSE_NEXT_RETRY, (string)$when);
 
     Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_CLOSE_RETRY_SCHEDULED, [
         'attempt' => $attempt,

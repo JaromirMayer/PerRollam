@@ -208,34 +208,17 @@ final class Spolek_Archive {
         }
 
         // Základní meta hlasování
-        $start_ts = (int) get_post_meta($vote_post_id, '_spolek_start_ts', true);
-        $end_ts   = (int) get_post_meta($vote_post_id, '_spolek_end_ts', true);
-        $text     = (string) get_post_meta($vote_post_id, '_spolek_text', true);
-
-        // Pokud existuje legacy helper, použijeme ho (aby text odpovídal realitě)
-        if (class_exists('Spolek_Hlasovani_MVP') && method_exists('Spolek_Hlasovani_MVP', 'get_vote_meta')) {
-            try {
-                $tmp = Spolek_Hlasovani_MVP::get_vote_meta($vote_post_id);
-                $start_ts = (int)($tmp[0] ?? $start_ts);
-                $end_ts   = (int)($tmp[1] ?? $end_ts);
-                $text     = (string)($tmp[2] ?? $text);
-            } catch (\Throwable $e) {
-                // ignore
-            }
-        }
+        [$start_ts, $end_ts, $text] = class_exists('Spolek_Vote_Service')
+            ? Spolek_Vote_Service::get_vote_meta($vote_post_id)
+            : [(int) get_post_meta($vote_post_id, Spolek_Config::META_START_TS, true), (int) get_post_meta($vote_post_id, Spolek_Config::META_END_TS, true), (string) get_post_meta($vote_post_id, Spolek_Config::META_TEXT, true)];
 
         // Počty hlasů
         $counts = self::counts_map($vote_post_id);
 
         // Vyhodnocení
-        $eval = null;
-        if (class_exists('Spolek_Hlasovani_MVP') && method_exists('Spolek_Hlasovani_MVP', 'evaluate_vote')) {
-            try {
-                $eval = Spolek_Hlasovani_MVP::evaluate_vote($vote_post_id, $counts);
-            } catch (\Throwable $e) {
-                $eval = null;
-            }
-        }
+        $eval = class_exists('Spolek_Vote_Service')
+            ? Spolek_Vote_Service::evaluate_vote($vote_post_id, $counts)
+            : null;
 
         // Název souboru
         $slug = sanitize_title($post->post_title);
@@ -280,7 +263,7 @@ final class Spolek_Archive {
         ];
 
         // minutes.pdf
-        $pdf_path = (string) get_post_meta($vote_post_id, '_spolek_pdf_path', true);
+        $pdf_path = (string) get_post_meta($vote_post_id, Spolek_Config::META_PDF_PATH, true);
         if ($pdf_path !== '' && file_exists($pdf_path)) {
             $manifest['minutes.pdf'] = [
                 'sha256' => hash_file('sha256', $pdf_path),
@@ -298,14 +281,14 @@ final class Spolek_Archive {
             'end_ts'      => $end_ts,
             'start'       => $start_ts ? wp_date('c', $start_ts, wp_timezone()) : null,
             'end'         => $end_ts ? wp_date('c', $end_ts, wp_timezone()) : null,
-            'processed_at'=> (int) get_post_meta($vote_post_id, (defined('Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT') ? Spolek_Hlasovani_MVP::META_CLOSE_PROCESSED_AT : '_spolek_close_processed_at'), true),
+            'processed_at'=> (int) get_post_meta($vote_post_id, Spolek_Config::META_CLOSE_PROCESSED_AT, true),
             'counts'      => $counts,
             'evaluation'  => $eval,
             'rules'       => [
-                'ruleset'      => (string) get_post_meta($vote_post_id, (defined('Spolek_Hlasovani_MVP::META_RULESET') ? Spolek_Hlasovani_MVP::META_RULESET : '_spolek_ruleset'), true),
-                'quorum_ratio' => (float) get_post_meta($vote_post_id, (defined('Spolek_Hlasovani_MVP::META_QUORUM_RATIO') ? Spolek_Hlasovani_MVP::META_QUORUM_RATIO : '_spolek_quorum_ratio'), true),
-                'pass_ratio'   => (float) get_post_meta($vote_post_id, (defined('Spolek_Hlasovani_MVP::META_PASS_RATIO') ? Spolek_Hlasovani_MVP::META_PASS_RATIO : '_spolek_pass_ratio'), true),
-                'base'         => (string) get_post_meta($vote_post_id, (defined('Spolek_Hlasovani_MVP::META_BASE') ? Spolek_Hlasovani_MVP::META_BASE : '_spolek_pass_base'), true),
+                'ruleset'      => (string) get_post_meta($vote_post_id, Spolek_Config::META_RULESET, true),
+                'quorum_ratio' => (float) get_post_meta($vote_post_id, Spolek_Config::META_QUORUM_RATIO, true),
+                'pass_ratio'   => (float) get_post_meta($vote_post_id, Spolek_Config::META_PASS_RATIO, true),
+                'base'         => (string) get_post_meta($vote_post_id, Spolek_Config::META_BASE, true),
             ],
             'files'       => $manifest,
             'archived_at' => wp_date('c', time(), wp_timezone()),
@@ -444,23 +427,17 @@ final class Spolek_Archive {
         $deleted_mail  = 0;
         $deleted_audit = 0;
 
-        if (class_exists('Spolek_Hlasovani_MVP') && defined('Spolek_Hlasovani_MVP::TABLE')) {
-            $t_votes = $wpdb->prefix . Spolek_Hlasovani_MVP::TABLE;
-            $deleted_votes = (int) $wpdb->query($wpdb->prepare("DELETE FROM $t_votes WHERE vote_post_id=%d", $vote_post_id));
-        }
+        $t_votes = Spolek_Config::table_votes();
+        $deleted_votes = (int) $wpdb->query($wpdb->prepare("DELETE FROM $t_votes WHERE vote_post_id=%d", $vote_post_id));
 
-        if (class_exists('Spolek_Mailer') && method_exists('Spolek_Mailer', 'table_name')) {
-            $t_mail = Spolek_Mailer::table_name();
-            $deleted_mail = (int) $wpdb->query($wpdb->prepare("DELETE FROM $t_mail WHERE vote_post_id=%d", $vote_post_id));
-        }
+        $t_mail = Spolek_Config::table_mail_log();
+        $deleted_mail = (int) $wpdb->query($wpdb->prepare("DELETE FROM $t_mail WHERE vote_post_id=%d", $vote_post_id));
 
-        if (class_exists('Spolek_Audit') && defined('Spolek_Audit::TABLE_AUDIT')) {
-            $t_audit = $wpdb->prefix . Spolek_Audit::TABLE_AUDIT;
-            $deleted_audit = (int) $wpdb->query($wpdb->prepare("DELETE FROM $t_audit WHERE vote_post_id=%d", $vote_post_id));
-        }
+        $t_audit = Spolek_Config::table_audit();
+        $deleted_audit = (int) $wpdb->query($wpdb->prepare("DELETE FROM $t_audit WHERE vote_post_id=%d", $vote_post_id));
 
         // Smazat původní PDF (už je v ZIPu)
-        $pdf_path = (string) get_post_meta($vote_post_id, '_spolek_pdf_path', true);
+        $pdf_path = (string) get_post_meta($vote_post_id, Spolek_Config::META_PDF_PATH, true);
         if ($pdf_path !== '' && file_exists($pdf_path)) {
             @unlink($pdf_path);
         }
@@ -790,11 +767,7 @@ final class Spolek_Archive {
         global $wpdb;
         $map = ['ANO' => 0, 'NE' => 0, 'ZDRZEL' => 0];
 
-        if (!(class_exists('Spolek_Hlasovani_MVP') && defined('Spolek_Hlasovani_MVP::TABLE'))) {
-            return $map;
-        }
-
-        $table = $wpdb->prefix . Spolek_Hlasovani_MVP::TABLE;
+        $table = Spolek_Config::table_votes();
         $rows = $wpdb->get_results($wpdb->prepare(
             "SELECT choice, COUNT(*) as c FROM $table WHERE vote_post_id=%d GROUP BY choice",
             $vote_post_id
@@ -814,25 +787,23 @@ final class Spolek_Archive {
         $lines = fopen('php://temp', 'r+');
         fputcsv($lines, ['user_id','user_email','display_name','choice','cast_at'], ';');
 
-        if (class_exists('Spolek_Hlasovani_MVP') && defined('Spolek_Hlasovani_MVP::TABLE')) {
-            $table = $wpdb->prefix . Spolek_Hlasovani_MVP::TABLE;
+        $table = Spolek_Config::table_votes();
 
-            $rows = $wpdb->get_results($wpdb->prepare(
-                "SELECT user_id, choice, cast_at FROM $table WHERE vote_post_id=%d ORDER BY cast_at ASC",
-                $vote_post_id
-            ), ARRAY_A);
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT user_id, choice, cast_at FROM $table WHERE vote_post_id=%d ORDER BY cast_at ASC",
+            $vote_post_id
+        ), ARRAY_A);
 
-            foreach ((array)$rows as $r) {
-                $uid = (int)($r['user_id'] ?? 0);
-                $u = $uid ? get_user_by('id', $uid) : null;
-                fputcsv($lines, [
-                    $uid,
-                    $u ? (string)$u->user_email : '',
-                    $u ? (string)$u->display_name : '',
-                    (string)($r['choice'] ?? ''),
-                    (string)($r['cast_at'] ?? ''),
-                ], ';');
-            }
+        foreach ((array)$rows as $r) {
+            $uid = (int)($r['user_id'] ?? 0);
+            $u = $uid ? get_user_by('id', $uid) : null;
+            fputcsv($lines, [
+                $uid,
+                $u ? (string)$u->user_email : '',
+                $u ? (string)$u->display_name : '',
+                (string)($r['choice'] ?? ''),
+                (string)($r['cast_at'] ?? ''),
+            ], ';');
         }
 
         rewind($lines);

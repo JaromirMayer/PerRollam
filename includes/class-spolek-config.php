@@ -26,6 +26,15 @@ final class Spolek_Config {
     // Self-heal transient (rate-limit per-request runner)
     public const SELF_HEAL_TRANSIENT = 'spolek_self_heal_last_run';
 
+    // Meta keys (hlasování)
+    public const META_TEXT             = '_spolek_text';
+    public const META_START_TS         = '_spolek_start_ts';
+    public const META_END_TS           = '_spolek_end_ts';
+
+    // Meta keys (PDF)
+    public const META_PDF_PATH         = '_spolek_pdf_path';
+    public const META_PDF_GENERATED_AT = '_spolek_pdf_generated_at';
+
     // Meta keys (výsledek/uzávěrka)
     public const META_RULESET            = '_spolek_ruleset';
     public const META_QUORUM_RATIO       = '_spolek_quorum_ratio';
