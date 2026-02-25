@@ -1,5 +1,13 @@
 {
-    "require": {
-        "dompdf/dompdf": "^3.1"
-    }
+  "require": {
+    "dompdf/dompdf": "^3.1"
+  },
+  "autoload": {
+    "classmap": [
+      "includes/"
+    ]
+  },
+  "config": {
+    "optimize-autoloader": true
+  }
 }
