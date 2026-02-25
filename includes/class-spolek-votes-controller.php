@@ -18,7 +18,7 @@ final class Spolek_Votes_Controller {
         Spolek_Admin::require_manager();
         Spolek_Admin::verify_nonce_post('spolek_create_vote');
 
-        $return_to = Spolek_Admin::get_return_to(home_url('/clenove/hlasovani/'));
+        $return_to = Spolek_Admin::get_return_to(Spolek_Admin::default_return_to());
 
         $title = sanitize_text_field($_POST['title'] ?? '');
         $text  = sanitize_textarea_field($_POST['text'] ?? '');
@@ -101,7 +101,7 @@ final class Spolek_Votes_Controller {
     public static function handle_cast_vote(): void {
         Spolek_Admin::require_login();
 
-        $return_to = Spolek_Admin::get_return_to(home_url('/clenove/hlasovani/'));
+        $return_to = Spolek_Admin::get_return_to(Spolek_Admin::default_return_to());
 
         $vote_post_id = (int)($_POST['vote_post_id'] ?? 0);
         $choice = sanitize_text_field($_POST['choice'] ?? '');
@@ -178,6 +178,12 @@ final class Spolek_Votes_Controller {
         Spolek_Admin::verify_nonce_post('spolek_export_csv_' . $vote_post_id);
 
         $rows = class_exists('Spolek_Votes') ? Spolek_Votes::export_rows($vote_post_id) : [];
+
+        if (class_exists('Spolek_Audit')) {
+            Spolek_Audit::log($vote_post_id, get_current_user_id(), Spolek_Audit_Events::CSV_EXPORTED, [
+                'rows' => is_array($rows) ? count($rows) : 0,
+            ]);
+        }
 
         $filename = 'hlasovani-' . $vote_post_id . '-hlasy.csv';
 

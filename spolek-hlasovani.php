@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Spolek – Hlasování per rollam (MVP)
  * Description: Front-end hlasování pro členy spolku (ANO/NE/ZDRŽEL), 1 hlas na člena, uzávěrka a export CSV.
- * Version: 0.5.5
+ * Version: 0.5.6
  */
 
 defined('ABSPATH') || exit;

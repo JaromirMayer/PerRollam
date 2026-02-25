@@ -44,6 +44,19 @@ final class Spolek_Audit_Events {
     // Close scan
     public const CLOSE_SCAN_ERROR     = 'close.scan.error';
 
+    // Manual admin actions
+    public const CSV_EXPORTED          = 'csv.exported';
+    public const ARCHIVE_MANUAL_START  = 'archive.manual.start';
+    public const ARCHIVE_MANUAL_DONE   = 'archive.manual.done';
+    public const ARCHIVE_MANUAL_FAIL   = 'archive.manual.fail';
+    public const ARCHIVE_DOWNLOAD      = 'archive.download';
+    public const PURGE_MANUAL_START    = 'purge.manual.start';
+    public const PURGE_MANUAL_DONE     = 'purge.manual.done';
+    public const PURGE_MANUAL_FAIL     = 'purge.manual.fail';
+    public const CLOSE_SCAN_MANUAL     = 'close.scan.manual';
+    public const PURGE_SCAN_MANUAL     = 'purge.scan.manual';
+    public const ARCHIVE_STORAGE_TEST  = 'archive.storage_test';
+
     // Self-heal (request-driven watchdog)
     public const SELF_HEAL_TICK      = 'self_heal.tick';
     public const SELF_HEAL_CLOSE_RUN = 'self_heal.close.run';

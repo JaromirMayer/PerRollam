@@ -270,7 +270,12 @@ class Spolek_Hlasovani_MVP {
     public static function vote_detail_url(int $vote_post_id) : string {
         return class_exists('Spolek_Vote_Service')
             ? Spolek_Vote_Service::vote_detail_url($vote_post_id)
-            : add_query_arg('spolek_vote', $vote_post_id, home_url('/clenove/hlasovani/'));
+            : (function() use ($vote_post_id) {
+                $base = home_url('/clenove/hlasovani/');
+                $base = (string) apply_filters('spolek_vote_portal_base_url', $base);
+                $base = $base ?: home_url('/clenove/hlasovani/');
+                return add_query_arg('spolek_vote', $vote_post_id, $base);
+            })();
     }
 
     public static function get_members() {

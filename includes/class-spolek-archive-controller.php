@@ -24,7 +24,11 @@ final class Spolek_Archive_Controller {
         if (!$vote_post_id) wp_die('Neplatné hlasování.');
 
         Spolek_Admin::verify_nonce_post('spolek_archive_vote_' . $vote_post_id);
-        $return_to = Spolek_Admin::get_return_to(home_url('/clenove/hlasovani/'));
+        $return_to = Spolek_Admin::get_return_to(Spolek_Admin::default_return_to());
+
+        if (class_exists('Spolek_Audit')) {
+            Spolek_Audit::log($vote_post_id, get_current_user_id(), Spolek_Audit_Events::ARCHIVE_MANUAL_START, []);
+        }
 
         if (!class_exists('Spolek_Archive')) {
             wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Archive.'), $return_to));
@@ -34,11 +38,22 @@ final class Spolek_Archive_Controller {
         $res = Spolek_Archive::archive_vote($vote_post_id, true);
 
         if (is_array($res) && !empty($res['ok'])) {
+            if (class_exists('Spolek_Audit')) {
+                $file = (string) get_post_meta($vote_post_id, Spolek_Config::META_ARCHIVE_FILE, true);
+                Spolek_Audit::log($vote_post_id, get_current_user_id(), Spolek_Audit_Events::ARCHIVE_MANUAL_DONE, [
+                    'file' => $file ?: null,
+                ]);
+            }
             wp_safe_redirect(add_query_arg('archived', '1', $return_to));
             exit;
         }
 
         $err = is_array($res) ? (string)($res['error'] ?? 'Archivace selhala') : 'Archivace selhala';
+        if (class_exists('Spolek_Audit')) {
+            Spolek_Audit::log($vote_post_id, get_current_user_id(), Spolek_Audit_Events::ARCHIVE_MANUAL_FAIL, [
+                'error' => $err,
+            ]);
+        }
         wp_safe_redirect(add_query_arg('err', rawurlencode($err), $return_to));
         exit;
     }
@@ -58,6 +73,12 @@ final class Spolek_Archive_Controller {
 
         Spolek_Admin::verify_nonce_get('spolek_download_archive_' . $file);
 
+        if (class_exists('Spolek_Audit')) {
+            Spolek_Audit::log($vote_post_id ?: 0, get_current_user_id(), Spolek_Audit_Events::ARCHIVE_DOWNLOAD, [
+                'file' => $file,
+            ]);
+        }
+
         if (!class_exists('Spolek_Archive')) {
             wp_die('Chybí Spolek_Archive.');
         }
@@ -73,7 +94,11 @@ final class Spolek_Archive_Controller {
 
         Spolek_Admin::verify_nonce_post('spolek_purge_vote_' . $vote_post_id);
 
-        $return_to = Spolek_Admin::get_return_to(home_url('/clenove/hlasovani/'));
+        $return_to = Spolek_Admin::get_return_to(Spolek_Admin::default_return_to());
+
+        if (class_exists('Spolek_Audit')) {
+            Spolek_Audit::log($vote_post_id, get_current_user_id(), Spolek_Audit_Events::PURGE_MANUAL_START, []);
+        }
 
         if (!class_exists('Spolek_Archive')) {
             wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Archive.'), $return_to));
@@ -83,11 +108,19 @@ final class Spolek_Archive_Controller {
         $res = Spolek_Archive::purge_vote($vote_post_id);
 
         if (is_array($res) && !empty($res['ok'])) {
+            if (class_exists('Spolek_Audit')) {
+                Spolek_Audit::log($vote_post_id, get_current_user_id(), Spolek_Audit_Events::PURGE_MANUAL_DONE, []);
+            }
             wp_safe_redirect(add_query_arg('purged', '1', $return_to));
             exit;
         }
 
         $err = is_array($res) ? (string)($res['error'] ?? 'Purge selhal') : 'Purge selhal';
+        if (class_exists('Spolek_Audit')) {
+            Spolek_Audit::log($vote_post_id, get_current_user_id(), Spolek_Audit_Events::PURGE_MANUAL_FAIL, [
+                'error' => $err,
+            ]);
+        }
         wp_safe_redirect(add_query_arg('err', rawurlencode($err), $return_to));
         exit;
     }
@@ -96,7 +129,7 @@ final class Spolek_Archive_Controller {
         Spolek_Admin::require_manager();
         Spolek_Admin::verify_nonce_post('spolek_test_archive_storage');
 
-        $return_to = Spolek_Admin::get_return_to(home_url('/clenove/hlasovani/'));
+        $return_to = Spolek_Admin::get_return_to(Spolek_Admin::default_return_to());
 
         if (!class_exists('Spolek_Archive') || !method_exists('Spolek_Archive', 'test_write')) {
             wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Archive::test_write.'), $return_to));
@@ -118,6 +151,15 @@ final class Spolek_Archive_Controller {
         if (!empty($res['dir']))     $args['storage_test_dir']     = (string)$res['dir'];
         if (!empty($res['error']))   $args['storage_test_err']     = (string)$res['error'];
 
+        if (class_exists('Spolek_Audit')) {
+            Spolek_Audit::log(0, get_current_user_id(), Spolek_Audit_Events::ARCHIVE_STORAGE_TEST, [
+                'ok'      => !empty($res['ok']) ? 1 : 0,
+                'storage' => $res['storage'] ?? null,
+                'dir'     => $res['dir'] ?? null,
+                'error'   => $res['error'] ?? null,
+            ]);
+        }
+
         wp_safe_redirect(add_query_arg($args, $return_to));
         exit;
     }
@@ -126,7 +168,7 @@ final class Spolek_Archive_Controller {
         Spolek_Admin::require_manager();
         Spolek_Admin::verify_nonce_post('spolek_run_close_scan');
 
-        $return_to = Spolek_Admin::get_return_to(home_url('/clenove/hlasovani/'));
+        $return_to = Spolek_Admin::get_return_to(Spolek_Admin::default_return_to());
 
         if (!class_exists('Spolek_Cron') || !method_exists('Spolek_Cron', 'close_scan')) {
             wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Cron::close_scan.'), $return_to));
@@ -145,6 +187,15 @@ final class Spolek_Archive_Controller {
              . ', standard: ' . (int)($stats['normal'] ?? 0)
              . ', chyby: ' . (int)($stats['errors'] ?? 0) . ').';
 
+        if (class_exists('Spolek_Audit')) {
+            Spolek_Audit::log(0, get_current_user_id(), Spolek_Audit_Events::CLOSE_SCAN_MANUAL, [
+                'total'  => (int)($stats['total'] ?? 0),
+                'silent' => (int)($stats['silent'] ?? 0),
+                'normal' => (int)($stats['normal'] ?? 0),
+                'errors' => (int)($stats['errors'] ?? 0),
+            ]);
+        }
+
         wp_safe_redirect(add_query_arg('notice', rawurlencode($msg), $return_to));
         exit;
     }
@@ -153,7 +204,7 @@ final class Spolek_Archive_Controller {
         Spolek_Admin::require_manager();
         Spolek_Admin::verify_nonce_post('spolek_run_purge_scan');
 
-        $return_to = Spolek_Admin::get_return_to(home_url('/clenove/hlasovani/'));
+        $return_to = Spolek_Admin::get_return_to(Spolek_Admin::default_return_to());
 
         if (!class_exists('Spolek_Cron') || !method_exists('Spolek_Cron', 'purge_scan')) {
             wp_safe_redirect(add_query_arg('err', rawurlencode('Chybí Spolek_Cron::purge_scan.'), $return_to));
@@ -191,6 +242,12 @@ final class Spolek_Archive_Controller {
         }
 
         $delta = max(0, (int)$after - (int)$before);
+
+        if (class_exists('Spolek_Audit')) {
+            Spolek_Audit::log(0, get_current_user_id(), Spolek_Audit_Events::PURGE_SCAN_MANUAL, [
+                'purged' => (int)$delta,
+            ]);
+        }
 
         wp_safe_redirect(add_query_arg([
             'purge_scan' => '1',

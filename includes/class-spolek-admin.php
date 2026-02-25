@@ -53,8 +53,35 @@ final class Spolek_Admin {
         return $fallback;
     }
 
+    /** Default návratová URL (portál). */
+    public static function default_return_to(): string {
+        if (class_exists('Spolek_Vote_Service')) {
+            $url = (string) Spolek_Vote_Service::portal_base_url();
+            if ($url) return $url;
+        }
+        return home_url('/clenove/hlasovani/');
+    }
+
     public static function redirect_with_error(string $return_to, string $msg): void {
         wp_safe_redirect(add_query_arg('err', rawurlencode($msg), $return_to));
+        exit;
+    }
+
+    public static function redirect_with_notice(string $return_to, string $msg): void {
+        wp_safe_redirect(add_query_arg('notice', rawurlencode($msg), $return_to));
+        exit;
+    }
+
+    /**
+     * Bezpečný redirect s více query parametry (string=>string/int).
+     * @param array<string,string|int> $args
+     */
+    public static function redirect_with_args(string $return_to, array $args): void {
+        $safe = [];
+        foreach ($args as $k => $v) {
+            $safe[(string)$k] = is_int($v) ? (string)$v : (string)$v;
+        }
+        wp_safe_redirect(add_query_arg($safe, $return_to));
         exit;
     }
 
