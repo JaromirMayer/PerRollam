@@ -104,7 +104,7 @@ final class Spolek_PDF_Service {
 
         $download_url = self::member_adminpost_url($vote_post_id, $uid, $exp, $sig);
 
-        $default_after = home_url('/clenove/profil/');
+        $default_after = home_url('/clenove/portal/');
         $after_url = $atts['after'] !== ''
             ? (string) $atts['after']
             : (string) apply_filters('spolek_pdf_after_url', $default_after);
