@@ -1,14 +1,23 @@
 <?php
 /**
- * Plugin Name: Spolek – Hlasování per rollam (MVP)
- * Description: Front-end hlasování pro členy spolku (ANO/NE/ZDRŽEL), 1 hlas na člena, uzávěrka a export CSV.
- * Version: 0.6.6
+ * Plugin Name:       PerRollam – Hlasování per rollam
+ * Plugin URI:        https://solitare.eu/perrollam
+ * Description:       Front-end hlasování pro členy spolku (ANO/NE/ZDRŽEL), uzávěrka, exporty, archivace.
+ * Version:           5.7.0
+ * Requires at least: 6.2
+ * Requires PHP:      8.0
+ * Author:            Jaromír
+ * Author URI:        https://solitare.eu
+ * License:           GPLv2 or later
+ * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
+ * Text Domain:       perrollam
+ * Domain Path:       /languages
  */
 
 defined('ABSPATH') || exit;
 
 // === Konstanty pluginu (používají je include třídy) ===
-define('SPOLEK_HLASOVANI_VERSION', '0.6.6');
+define('SPOLEK_HLASOVANI_VERSION', '5.7.0');
 define('SPOLEK_HLASOVANI_FILE', __FILE__);
 define('SPOLEK_HLASOVANI_PATH', plugin_dir_path(__FILE__));
 define('SPOLEK_HLASOVANI_URL', plugin_dir_url(__FILE__));
