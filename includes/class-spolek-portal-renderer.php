@@ -37,10 +37,18 @@ final class Spolek_Portal_Renderer {
 
         $out = '';
 
-        // Detail?
-        $vote_id = (int) get_query_var('spolek_vote');
-        if (!$vote_id && isset($_GET['spolek_vote'])) {
-            $vote_id = (int) $_GET['spolek_vote'];
+        // Detail? (preferujeme veřejný token v=...)
+        $vote_id = 0;
+        $public = isset($_GET['v']) ? sanitize_text_field(wp_unslash((string)$_GET['v'])) : '';
+        if ($public !== '' && class_exists('Spolek_Vote_Service')) {
+            $vote_id = (int) Spolek_Vote_Service::resolve_public_id($public);
+        }
+
+        if (!$vote_id) {
+            $vote_id = (int) get_query_var('spolek_vote');
+            if (!$vote_id && isset($_GET['spolek_vote'])) {
+                $vote_id = (int) $_GET['spolek_vote'];
+            }
         }
         if ($vote_id) {
             $out .= self::render_detail($vote_id);
@@ -106,9 +114,17 @@ final class Spolek_Portal_Renderer {
     private static function portal_url(): string {
         // aktuální URL stránky bez query
         return remove_query_arg([
-            'spolek_vote','created','voted','err','export','archived','purged','purge_scan','purge_scan_purged',
+            'v','spolek_vote','created','voted','err','export','archived','purged','purge_scan','purge_scan_purged',
             'notice','storage_test','storage_test_ok','storage_test_err','storage_test_storage','storage_test_dir','storage_test_err'
         ], home_url(add_query_arg([])));
+    }
+
+    /** Detail URL hlasování (preferuje v=... token). */
+    private static function detail_url(int $vote_post_id): string {
+        if (class_exists('Spolek_Vote_Service')) {
+            return (string) Spolek_Vote_Service::vote_detail_url($vote_post_id);
+        }
+        return add_query_arg('spolek_vote', (int)$vote_post_id, self::portal_url());
     }
 
     /** 6.1.4 – Cron status (jen pro správce). */
@@ -497,7 +513,7 @@ final class Spolek_Portal_Renderer {
             $status = self::vote_status($start_ts, $end_ts);
             $label = $status === 'open' ? 'Otevřené' : ($status === 'closed' ? 'Ukončené' : 'Připravované');
 
-            $link = add_query_arg('spolek_vote', $id, self::portal_url());
+            $link = self::detail_url($id);
             $html .= '<li>';
             $html .= '<a href="'.esc_url($link).'">' . esc_html(get_the_title()) . '</a>';
             $html .= ' — <em>' . esc_html($label) . '</em>';
@@ -587,7 +603,7 @@ final class Spolek_Portal_Renderer {
                 $end_label = $end_ts ? wp_date('j.n.Y H:i', (int)$end_ts, wp_timezone()) : '–';
                 $proc_label = $processed_at ? wp_date('j.n.Y H:i', (int)$processed_at, wp_timezone()) : '–';
 
-                $detail_link = add_query_arg('spolek_vote', $id, self::portal_url());
+                $detail_link = self::detail_url($id);
 
                 $html .= '<tr>';
                 $html .= '<td style="border-bottom:1px solid #eee;padding:6px;">'
@@ -821,7 +837,7 @@ final class Spolek_Portal_Renderer {
             $id = get_the_ID();
             [$start_ts, $end_ts] = self::vote_meta($id);
 
-            $link = add_query_arg('spolek_vote', $id, self::portal_url());
+            $link = self::detail_url($id);
 
             $end_label = $end_ts ? wp_date('j.n.Y H:i', (int)$end_ts, wp_timezone()) : '–';
             $html .= '<li><a href="'.esc_url($link).'">' . esc_html(get_the_title()) . '</a>'
@@ -856,7 +872,8 @@ final class Spolek_Portal_Renderer {
             $html .= '<p><strong>Děkujeme, hlas byl uložen.</strong></p>';
         }
         if (!empty($_GET['err'])) {
-            $html .= '<p><strong style="color:#b00;">Chyba: ' . esc_html((string)$_GET['err']) . '</strong></p>';
+            $err = sanitize_text_field(wp_unslash((string)$_GET['err']));
+            $html .= '<p><strong style="color:#b00;">Chyba: ' . esc_html($err) . '</strong></p>';
         }
 
         if ($status !== 'open') {

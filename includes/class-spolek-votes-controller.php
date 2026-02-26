@@ -18,12 +18,15 @@ final class Spolek_Votes_Controller {
         Spolek_Admin::require_manager();
         Spolek_Admin::verify_nonce_post('spolek_create_vote');
 
+        // citlivá akce (ochrana proti spam klikání)
+        Spolek_Admin::throttle_or_die('create_vote', 10, HOUR_IN_SECONDS);
+
         $return_to = Spolek_Admin::get_return_to(Spolek_Admin::default_return_to());
 
-        $title = sanitize_text_field($_POST['title'] ?? '');
-        $text  = sanitize_textarea_field($_POST['text'] ?? '');
-        $start = sanitize_text_field($_POST['start'] ?? '');
-        $end   = sanitize_text_field($_POST['end'] ?? '');
+        $title = sanitize_text_field(wp_unslash($_POST['title'] ?? ''));
+        $text  = sanitize_textarea_field(wp_unslash($_POST['text'] ?? ''));
+        $start = sanitize_text_field(wp_unslash($_POST['start'] ?? ''));
+        $end   = sanitize_text_field(wp_unslash($_POST['end'] ?? ''));
 
         $tz = wp_timezone();
         $start_dt = DateTimeImmutable::createFromFormat('Y-m-d H:i', $start, $tz);
@@ -46,6 +49,11 @@ final class Spolek_Votes_Controller {
         }
         $post_id = (int) $post_id;
 
+        // proti enumeration: vygenerovat veřejný token pro URL
+        if (class_exists('Spolek_Vote_Service')) {
+            Spolek_Vote_Service::ensure_public_id($post_id);
+        }
+
         update_post_meta($post_id, Spolek_Config::META_TEXT, $text);
         update_post_meta($post_id, Spolek_Config::META_START_TS, (int)$start_ts);
         update_post_meta($post_id, Spolek_Config::META_END_TS, (int)$end_ts);
@@ -56,10 +64,10 @@ final class Spolek_Votes_Controller {
             ]);
         }
 
-        $ruleset = sanitize_text_field($_POST['ruleset'] ?? 'standard');
+        $ruleset = sanitize_text_field(wp_unslash($_POST['ruleset'] ?? 'standard'));
         if (!in_array($ruleset, ['standard', 'two_thirds'], true)) $ruleset = 'standard';
 
-        $pass_base = sanitize_text_field($_POST['pass_base'] ?? 'valid');
+        $pass_base = sanitize_text_field(wp_unslash($_POST['pass_base'] ?? 'valid'));
         if (!in_array($pass_base, ['valid', 'all'], true)) $pass_base = 'valid';
 
         $to_ratio = static function($v) {
@@ -72,8 +80,8 @@ final class Spolek_Votes_Controller {
             return $r;
         };
 
-        $quorum_ratio = $to_ratio($_POST['quorum_ratio'] ?? '');
-        $pass_ratio   = $to_ratio($_POST['pass_ratio'] ?? '');
+        $quorum_ratio = $to_ratio(wp_unslash($_POST['quorum_ratio'] ?? ''));
+        $pass_ratio   = $to_ratio(wp_unslash($_POST['pass_ratio'] ?? ''));
 
         update_post_meta($post_id, Spolek_Config::META_RULESET, $ruleset);
         update_post_meta($post_id, Spolek_Config::META_BASE, $pass_base);
@@ -103,8 +111,11 @@ final class Spolek_Votes_Controller {
         $return_to = Spolek_Admin::get_return_to(Spolek_Admin::default_return_to());
 
         $vote_post_id = (int)($_POST['vote_post_id'] ?? 0);
-        $choice = sanitize_text_field($_POST['choice'] ?? '');
+        $choice = sanitize_text_field(wp_unslash($_POST['choice'] ?? ''));
         $user_id = get_current_user_id();
+
+        // throttling na citlivý endpoint (hlasování)
+        Spolek_Admin::throttle_or_die('cast_vote:' . $vote_post_id, 20, MINUTE_IN_SECONDS);
 
         if (class_exists('Spolek_Audit')) {
             Spolek_Audit::log($vote_post_id ?: 0, $user_id, Spolek_Audit_Events::VOTE_CAST_ATTEMPT, [
@@ -169,6 +180,8 @@ final class Spolek_Votes_Controller {
 
     public static function handle_export_csv(): void {
         Spolek_Admin::require_manager();
+
+        Spolek_Admin::throttle_or_die('export_csv', 30, HOUR_IN_SECONDS);
 
         $vote_post_id = (int)($_POST['vote_post_id'] ?? 0);
         if (!$vote_post_id) wp_die('Neplatné hlasování.');

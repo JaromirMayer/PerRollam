@@ -255,8 +255,16 @@ final class Spolek_Mailer {
             // link pro člena (PDF landing) – jen pokud máme PDF servis
             if (class_exists('Spolek_PDF_Service')) {
                 $exp = time() + (30 * DAY_IN_SECONDS);
-                $sig = Spolek_PDF_Service::member_sig($uid, $vote_post_id, $exp);
-                $pdf_link = Spolek_PDF_Service::member_landing_url($vote_post_id, $uid, $exp, $sig);
+                // v2: bez UID a bez post_id v URL (ochrana proti enumeration)
+                $vid = class_exists('Spolek_Vote_Service') ? Spolek_Vote_Service::ensure_public_id($vote_post_id) : '';
+                if ($vid !== '') {
+                    $sig = Spolek_PDF_Service::member_sig_v2($uid, $vid, $exp);
+                    $pdf_link = Spolek_PDF_Service::member_landing_url_v2($vid, $exp, $sig);
+                } else {
+                    // fallback legacy
+                    $sig = Spolek_PDF_Service::member_sig($uid, $vote_post_id, $exp);
+                    $pdf_link = Spolek_PDF_Service::member_landing_url($vote_post_id, $uid, $exp, $sig);
+                }
                 $body .= "\n\nZápis PDF ke stažení (vyžaduje přihlášení):\n<{$pdf_link}>\n";
             }
 

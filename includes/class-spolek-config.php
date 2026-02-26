@@ -32,6 +32,9 @@ final class Spolek_Config {
     public const META_START_TS         = '_spolek_start_ts';
     public const META_END_TS           = '_spolek_end_ts';
 
+    // Ochrana proti enumeration – veřejný (náhodný) identifikátor hlasování pro URL.
+    public const META_PUBLIC_ID        = '_spolek_public_id';
+
     // Meta keys (PDF)
     public const META_PDF_PATH         = '_spolek_pdf_path';
     public const META_PDF_GENERATED_AT = '_spolek_pdf_generated_at';

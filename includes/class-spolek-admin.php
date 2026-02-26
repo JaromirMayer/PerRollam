@@ -8,6 +8,51 @@ if (!defined('ABSPATH')) exit;
  */
 final class Spolek_Admin {
 
+    /** Bezpečný IP string (pro rate-limit). */
+    public static function client_ip(): string {
+        $ip = '';
+        // Preferuj REMOTE_ADDR. HTTP_X_FORWARDED_FOR je snadno spoofovatelný.
+        if (!empty($_SERVER['REMOTE_ADDR'])) {
+            $ip = (string) $_SERVER['REMOTE_ADDR'];
+        }
+        $ip = trim($ip);
+        if ($ip === '') $ip = '0.0.0.0';
+        // normalizace
+        return substr(preg_replace('/[^0-9a-fA-F:\.]/', '', $ip), 0, 64);
+    }
+
+    /** Jednoduchý throttle (transient). */
+    public static function throttle_or_die(string $bucket, int $limit, int $window_seconds): void {
+        $bucket = trim((string)$bucket);
+        if ($bucket === '' || $limit <= 0 || $window_seconds <= 0) return;
+
+        $uid = is_user_logged_in() ? (int)get_current_user_id() : 0;
+        $ip  = self::client_ip();
+
+        $key = 'spolek_rl_' . substr(sha1($bucket . '|' . $uid . '|' . $ip), 0, 24);
+        $now = time();
+
+        $st = get_transient($key);
+        $count = 0;
+        $start = $now;
+        if (is_array($st)) {
+            $count = (int)($st['c'] ?? 0);
+            $start = (int)($st['s'] ?? $now);
+        }
+
+        if (($now - $start) >= $window_seconds) {
+            $count = 0;
+            $start = $now;
+        }
+
+        $count++;
+        set_transient($key, ['c' => $count, 's' => $start], $window_seconds + 5);
+
+        if ($count > $limit) {
+            wp_die('Příliš mnoho požadavků. Zkuste to prosím za chvíli.', 'Rate limit', ['response' => 429]);
+        }
+    }
+
     public static function is_manager(): bool {
         if (!is_user_logged_in()) return false;
         if (current_user_can(Spolek_Config::CAP_MANAGE)) return true;
@@ -30,21 +75,21 @@ final class Spolek_Admin {
     }
 
     public static function verify_nonce_post(string $action, string $field = '_nonce'): void {
-        $nonce = isset($_POST[$field]) ? (string)$_POST[$field] : '';
+        $nonce = isset($_POST[$field]) ? sanitize_text_field(wp_unslash((string)$_POST[$field])) : '';
         if ($nonce === '' || !wp_verify_nonce($nonce, $action)) {
             wp_die('Neplatný nonce.');
         }
     }
 
     public static function verify_nonce_get(string $action, string $field = '_nonce'): void {
-        $nonce = isset($_GET[$field]) ? (string)$_GET[$field] : '';
+        $nonce = isset($_GET[$field]) ? sanitize_text_field(wp_unslash((string)$_GET[$field])) : '';
         if ($nonce === '' || !wp_verify_nonce($nonce, $action)) {
             wp_die('Neplatný nonce.');
         }
     }
 
     public static function get_return_to(string $fallback): string {
-        $rt = isset($_POST['return_to']) ? esc_url_raw((string)$_POST['return_to']) : '';
+        $rt = isset($_POST['return_to']) ? esc_url_raw(wp_unslash((string)$_POST['return_to'])) : '';
         if ($rt) return $rt;
 
         $ref = wp_get_referer();
@@ -92,11 +137,23 @@ final class Spolek_Admin {
      * @param array<string,string|int> $args
      */
     public static function redirect_detail_args(string $return_to, int $vote_post_id, array $args): void {
+        // Preferujeme veřejný token v URL (parametr v=...) – proti enumeration.
+        if (class_exists('Spolek_Vote_Service')) {
+            $base = (string) Spolek_Vote_Service::vote_detail_url($vote_post_id);
+            self::redirect_with_args($base, $args);
+        }
+
         $args = array_merge(['spolek_vote' => (int)$vote_post_id], $args);
         self::redirect_with_args($return_to, $args);
     }
 
     public static function redirect_detail_error(string $return_to, int $vote_post_id, string $msg): void {
+        if (class_exists('Spolek_Vote_Service')) {
+            $base = (string) Spolek_Vote_Service::vote_detail_url($vote_post_id);
+            wp_safe_redirect(add_query_arg(['err' => rawurlencode($msg)], $base));
+            exit;
+        }
+
         wp_safe_redirect(add_query_arg(['spolek_vote' => $vote_post_id, 'err' => rawurlencode($msg)], $return_to));
         exit;
     }

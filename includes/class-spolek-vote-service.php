@@ -9,6 +9,56 @@ if (!defined('ABSPATH')) exit;
  */
 final class Spolek_Vote_Service {
 
+    /** Vrátí veřejný token hlasování (bezpečný pro URL), nebo prázdný string. */
+    public static function public_id(int $vote_post_id): string {
+        return (string) get_post_meta($vote_post_id, Spolek_Config::META_PUBLIC_ID, true);
+    }
+
+    /** Zajistí, že hlasování má veřejný token – vrací token. */
+    public static function ensure_public_id(int $vote_post_id): string {
+        $vote_post_id = (int)$vote_post_id;
+        if ($vote_post_id <= 0) return '';
+
+        $pid = self::public_id($vote_post_id);
+        if ($pid !== '') return $pid;
+
+        try {
+            $pid = bin2hex(random_bytes(12)); // 24 hex
+        } catch (Throwable $e) {
+            // fallback (horší, ale stále unikátní)
+            $pid = wp_hash($vote_post_id . '|' . microtime(true));
+            $pid = preg_replace('/[^a-f0-9]/', '', strtolower((string)$pid));
+            $pid = substr($pid ?: md5((string)$vote_post_id), 0, 24);
+        }
+
+        update_post_meta($vote_post_id, Spolek_Config::META_PUBLIC_ID, $pid);
+        return $pid;
+    }
+
+    /** Najde vote_post_id podle veřejného tokenu. Vrátí 0 když nenalezeno. */
+    public static function resolve_public_id(string $public_id): int {
+        $public_id = trim((string)$public_id);
+        if ($public_id === '' || strlen($public_id) < 12) return 0;
+        if (!preg_match('/^[a-f0-9]{12,64}$/i', $public_id)) return 0;
+
+        $q = new WP_Query([
+            'post_type'      => Spolek_Config::CPT,
+            'post_status'    => 'publish',
+            'posts_per_page' => 1,
+            'fields'         => 'ids',
+            'no_found_rows'  => true,
+            'meta_query'     => [
+                [
+                    'key'   => Spolek_Config::META_PUBLIC_ID,
+                    'value' => $public_id,
+                ],
+            ],
+        ]);
+
+        $ids = (array)($q->posts ?? []);
+        return !empty($ids[0]) ? (int)$ids[0] : 0;
+    }
+
     /** @return array{0:int,1:int,2:string} [start_ts,end_ts,text] */
     public static function get_vote_meta(int $post_id): array {
         $start_ts = (int) get_post_meta($post_id, Spolek_Config::META_START_TS, true);
@@ -147,6 +197,12 @@ final class Spolek_Vote_Service {
     }
 
     public static function vote_detail_url(int $vote_post_id): string {
+        $vote_post_id = (int)$vote_post_id;
+        // Preferujeme veřejný token (proti enumeration). Fallback na původní parametr.
+        $pid = self::ensure_public_id($vote_post_id);
+        if ($pid !== '') {
+            return add_query_arg('v', $pid, self::portal_base_url());
+        }
         return add_query_arg('spolek_vote', $vote_post_id, self::portal_base_url());
     }
 }

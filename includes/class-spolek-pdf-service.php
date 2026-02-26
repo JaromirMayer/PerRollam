@@ -12,11 +12,20 @@ final class Spolek_PDF_Service {
     private const META_PDF_GENERATED_AT = Spolek_Config::META_PDF_GENERATED_AT;
 
     /**
-     * HMAC podpis pro “member PDF” link.
+     * HMAC podpis pro “member PDF” link – legacy (obsahuje vote_post_id + uid v URL).
      */
     public static function member_sig(int $user_id, int $vote_post_id, int $exp): string {
         $data = $user_id . '|' . $vote_post_id . '|' . $exp;
         return hash_hmac('sha256', $data, wp_salt('spolek_member_pdf'));
+    }
+
+    /**
+     * HMAC podpis pro “member PDF” link – v2 (bez uid a bez post_id v URL; používá vid = veřejný token).
+     */
+    public static function member_sig_v2(int $user_id, string $vote_public_id, int $exp): string {
+        $vote_public_id = strtolower(trim((string)$vote_public_id));
+        $data = $user_id . '|' . $vote_public_id . '|' . $exp;
+        return hash_hmac('sha256', $data, wp_salt('spolek_member_pdf_v2'));
     }
 
     /**
@@ -54,6 +63,17 @@ final class Spolek_PDF_Service {
     }
 
     /**
+     * URL pro člena – v2 (bez uid/post_id). Parametr vid je veřejný token hlasování.
+     */
+    public static function member_landing_url_v2(string $vote_public_id, int $exp, string $sig): string {
+        return add_query_arg([
+            'vid' => strtolower(trim((string)$vote_public_id)),
+            'exp' => (int)$exp,
+            'sig' => (string)$sig,
+        ], self::landing_base_url());
+    }
+
+    /**
      * URL přímo na admin-post download pro člena (používá se v landing shortcodu).
      */
     public static function member_adminpost_url(int $vote_post_id, int $user_id, int $exp, string $sig): string {
@@ -66,13 +86,34 @@ final class Spolek_PDF_Service {
         ], admin_url('admin-post.php'));
     }
 
+    /** Admin-post URL – v2 (bez uid/post_id). */
+    public static function member_adminpost_url_v2(string $vote_public_id, int $exp, string $sig): string {
+        return add_query_arg([
+            'action' => 'spolek_member_pdf',
+            'vid'    => strtolower(trim((string)$vote_public_id)),
+            'exp'    => (int)$exp,
+            'sig'    => (string)$sig,
+        ], admin_url('admin-post.php'));
+    }
+
     /**
      * Validace parametrů a podpisu (bez kontroly přihlášení/rolí).
      */
     public static function validate_member_link(int $vote_post_id, int $user_id, int $exp, string $sig): bool {
         if ($vote_post_id <= 0 || $user_id <= 0 || $exp <= 0 || $sig === '') return false;
+        if (!preg_match('/^[a-f0-9]{64}$/i', $sig)) return false;
         if ($exp < time()) return false;
         $expected = self::member_sig($user_id, $vote_post_id, $exp);
+        return hash_equals($expected, $sig);
+    }
+
+    /** Validace v2 linku (vid + exp + sig) pro daného aktuálního uživatele. */
+    public static function validate_member_link_v2(string $vote_public_id, int $user_id, int $exp, string $sig): bool {
+        $vote_public_id = strtolower(trim((string)$vote_public_id));
+        if ($vote_public_id === '' || $user_id <= 0 || $exp <= 0 || $sig === '') return false;
+        if (!preg_match('/^[a-f0-9]{64}$/i', $sig)) return false;
+        if ($exp < time()) return false;
+        $expected = self::member_sig_v2($user_id, $vote_public_id, $exp);
         return hash_equals($expected, $sig);
     }
 
@@ -86,23 +127,35 @@ final class Spolek_PDF_Service {
             'delay' => '1500',   // ms
         ], (array)$atts, 'spolek_pdf_landing');
 
-        $vote_post_id = (int)($_GET['vote_post_id'] ?? 0);
-        $uid = (int)($_GET['uid'] ?? 0);
-        $exp = (int)($_GET['exp'] ?? 0);
-        $sig = (string)($_GET['sig'] ?? '');
+        $vote_post_id = isset($_GET['vote_post_id']) ? (int)$_GET['vote_post_id'] : 0;
+        $uid = isset($_GET['uid']) ? (int)$_GET['uid'] : 0;
+        $vid = isset($_GET['vid']) ? sanitize_text_field(wp_unslash((string)$_GET['vid'])) : '';
+        $exp = isset($_GET['exp']) ? (int)$_GET['exp'] : 0;
+        $sig = isset($_GET['sig']) ? sanitize_text_field(wp_unslash((string)$_GET['sig'])) : '';
 
-        if (!$vote_post_id || !$uid || !$exp || !$sig) {
+        $is_v2 = ($vid !== '' && $exp > 0 && $sig !== '');
+        $is_legacy = ($vote_post_id > 0 && $uid > 0 && $exp > 0 && $sig !== '');
+        if (!$is_v2 && !$is_legacy) {
             return '<p>Neplatný odkaz.</p>';
         }
 
         // když není přihlášený, vrať ho na login a po loginu zpět sem
         if (!is_user_logged_in()) {
-            $current_url = (is_ssl() ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['REQUEST_URI'] ?? '');
-            wp_safe_redirect(wp_login_url($current_url));
+            // bezpečná konstrukce redirect URL přes site/admin URL (bez spoléhání na Host header)
+            $params = [];
+            if ($is_v2) {
+                $params = ['vid' => $vid, 'exp' => $exp, 'sig' => $sig];
+            } else {
+                $params = ['vote_post_id' => $vote_post_id, 'uid' => $uid, 'exp' => $exp, 'sig' => $sig];
+            }
+            $landing = add_query_arg($params, self::landing_base_url());
+            wp_safe_redirect(wp_login_url(esc_url_raw($landing)));
             exit;
         }
 
-        $download_url = self::member_adminpost_url($vote_post_id, $uid, $exp, $sig);
+        $download_url = $is_v2
+            ? self::member_adminpost_url_v2($vid, $exp, $sig)
+            : self::member_adminpost_url($vote_post_id, $uid, $exp, $sig);
 
         $default_after = home_url('/clenove/portal/');
         $after_url = $atts['after'] !== ''
@@ -137,10 +190,12 @@ final class Spolek_PDF_Service {
             wp_die('Nemáte oprávnění.');
         }
 
-        $vote_post_id = (int)($_GET['vote_post_id'] ?? 0);
+        Spolek_Admin::throttle_or_die('admin_pdf', 120, HOUR_IN_SECONDS);
+
+        $vote_post_id = isset($_GET['vote_post_id']) ? (int)$_GET['vote_post_id'] : 0;
         if (!$vote_post_id) wp_die('Neplatné hlasování.');
 
-        $nonce = (string)($_GET['_nonce'] ?? '');
+        $nonce = isset($_GET['_nonce']) ? sanitize_text_field(wp_unslash((string)$_GET['_nonce'])) : '';
         if (!$nonce || !wp_verify_nonce($nonce, 'spolek_download_pdf_' . $vote_post_id)) {
             wp_die('Neplatný nonce.');
         }
@@ -153,41 +208,73 @@ final class Spolek_PDF_Service {
      * Handler: člen (nebo správce) stáhne PDF přes podepsaný link.
      */
     public static function handle_member_pdf(): void {
-        $vote_post_id = (int)($_GET['vote_post_id'] ?? 0);
-        $uid = (int)($_GET['uid'] ?? 0);
-        $exp = (int)($_GET['exp'] ?? 0);
-        $sig = (string)($_GET['sig'] ?? '');
+        $vote_post_id = isset($_GET['vote_post_id']) ? (int)$_GET['vote_post_id'] : 0;
+        $uid = isset($_GET['uid']) ? (int)$_GET['uid'] : 0;
+        $vid = isset($_GET['vid']) ? sanitize_text_field(wp_unslash((string)$_GET['vid'])) : '';
+        $exp = isset($_GET['exp']) ? (int)$_GET['exp'] : 0;
+        $sig = isset($_GET['sig']) ? sanitize_text_field(wp_unslash((string)$_GET['sig'])) : '';
 
-        if (!$vote_post_id || !$uid || !$exp || !$sig) {
-            wp_die('Neplatný odkaz (chybí parametr).');
+        if ($exp <= 0 || $sig === '') {
+            wp_die('Neplatný odkaz.');
         }
-
         if ($exp < time()) {
             wp_die('Odkaz vypršel.');
         }
 
         // Pokud není přihlášený, přesměruj na login a vrať se zpět na tento odkaz
         if (!is_user_logged_in()) {
-            $current_url = (is_ssl() ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['REQUEST_URI'] ?? '');
-            wp_safe_redirect(wp_login_url($current_url));
+            $params = [];
+            if ($vid !== '') {
+                $params = ['action' => 'spolek_member_pdf', 'vid' => $vid, 'exp' => $exp, 'sig' => $sig];
+            } else {
+                $params = ['action' => 'spolek_member_pdf', 'vote_post_id' => $vote_post_id, 'uid' => $uid, 'exp' => $exp, 'sig' => $sig];
+            }
+            $url = add_query_arg($params, admin_url('admin-post.php'));
+            wp_safe_redirect(wp_login_url(esc_url_raw($url)));
             exit;
-        }
-
-        $current_uid = (int) get_current_user_id();
-
-        // Pokud je přihlášený jiný uživatel než uid v odkazu, povol jen správci
-        if ($current_uid !== $uid && !self::is_manager()) {
-            wp_die('Odkaz je určen jinému uživateli.');
-        }
-
-        // Ověření podpisu
-        if (!self::validate_member_link($vote_post_id, $uid, $exp, $sig)) {
-            wp_die('Neplatný podpis odkazu.');
         }
 
         // Role / oprávnění (člen/správce/admin)
         if (!self::is_member_or_manager()) {
             wp_die('Nemáte oprávnění.');
+        }
+
+        // throttling – download je citlivý endpoint
+        Spolek_Admin::throttle_or_die('member_pdf', 60, HOUR_IN_SECONDS);
+
+        $current_uid = (int) get_current_user_id();
+
+        // v2: vid + sig (bez uid/post_id v URL)
+        if ($vid !== '') {
+            $vid = strtolower(trim($vid));
+            if (!self::validate_member_link_v2($vid, $current_uid, $exp, $sig)) {
+                wp_die('Neplatný odkaz.');
+            }
+
+            if (!class_exists('Spolek_Vote_Service')) {
+                wp_die('Neplatný odkaz.');
+            }
+            $vote_post_id = Spolek_Vote_Service::resolve_public_id($vid);
+            if ($vote_post_id <= 0) {
+                wp_die('Neplatný odkaz.');
+            }
+
+            $path = self::get_pdf_path($vote_post_id);
+            self::send_pdf_file_or_die($path);
+        }
+
+        // legacy: vote_post_id + uid + sig
+        if (!$vote_post_id || !$uid) {
+            wp_die('Neplatný odkaz.');
+        }
+
+        // Pokud je přihlášený jiný uživatel než uid v odkazu, povol jen správci
+        if ($current_uid !== $uid && !self::is_manager()) {
+            wp_die('Neplatný odkaz.');
+        }
+
+        if (!self::validate_member_link($vote_post_id, $uid, $exp, $sig)) {
+            wp_die('Neplatný odkaz.');
         }
 
         $path = self::get_pdf_path($vote_post_id);

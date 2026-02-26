@@ -58,13 +58,16 @@ final class Spolek_Archive_Controller {
     public static function handle_download_archive(): void {
         Spolek_Admin::require_manager();
 
-        $file = (string)($_GET['file'] ?? '');
-        $vote_post_id = (int)($_GET['vote_post_id'] ?? 0);
+        // throttling – download je citlivý endpoint
+        Spolek_Admin::throttle_or_die('download_archive', 60, 5 * MINUTE_IN_SECONDS);
+
+        $file = isset($_GET['file']) ? (string) wp_unslash($_GET['file']) : '';
+        $vote_post_id = isset($_GET['vote_post_id']) ? (int) $_GET['vote_post_id'] : 0;
 
         if ($file === '' && $vote_post_id) {
             $file = (string) get_post_meta($vote_post_id, Spolek_Config::META_ARCHIVE_FILE, true);
         }
-        $file = basename((string)$file);
+        $file = sanitize_file_name(basename((string)$file));
 
         if ($file === '') wp_die('Neplatný soubor.');
 
