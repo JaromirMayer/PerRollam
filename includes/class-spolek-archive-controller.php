@@ -12,6 +12,7 @@ final class Spolek_Archive_Controller {
         add_action('admin_post_spolek_archive_vote',         [__CLASS__, 'handle_archive_vote']);
         add_action('admin_post_spolek_download_archive',     [__CLASS__, 'handle_download_archive']);
         add_action('admin_post_spolek_purge_vote',           [__CLASS__, 'handle_purge_vote']);
+        add_action('admin_post_spolek_purge_votes',          [__CLASS__, 'handle_purge_votes']);
         add_action('admin_post_spolek_run_purge_scan',       [__CLASS__, 'handle_run_purge_scan']);
         add_action('admin_post_spolek_run_close_scan',       [__CLASS__, 'handle_run_close_scan']);
         add_action('admin_post_spolek_test_archive_storage', [__CLASS__, 'handle_test_archive_storage']);
@@ -122,7 +123,90 @@ final class Spolek_Archive_Controller {
         Spolek_Admin::redirect_with_error($return_to, $err);
     }
 
-    public static function handle_test_archive_storage(): void {
+    
+public static function handle_purge_votes(): void {
+    Spolek_Admin::require_manager();
+
+    // throttling – proti omylu / dvojkliku
+    Spolek_Admin::throttle_or_die('purge_votes', 10, 2 * MINUTE_IN_SECONDS);
+
+    Spolek_Admin::verify_nonce_post('spolek_purge_votes');
+
+    $return_to = Spolek_Admin::get_return_to(Spolek_Admin::default_return_to());
+
+    $ids_raw = $_POST['vote_post_ids'] ?? [];
+    if (!is_array($ids_raw)) $ids_raw = [];
+
+    $ids = [];
+    foreach ($ids_raw as $v) {
+        $id = (int) $v;
+        if ($id > 0) $ids[] = $id;
+    }
+    $ids = array_values(array_unique($ids));
+
+    if (!$ids) {
+        Spolek_Admin::redirect_with_notice($return_to, 'Nic není vybráno.');
+    }
+
+    // bezpečnostní limit
+    $max = 100;
+    if (count($ids) > $max) {
+        $ids = array_slice($ids, 0, $max);
+    }
+
+    if (!class_exists('Spolek_Archive')) {
+        Spolek_Admin::redirect_with_error($return_to, 'Chybí Spolek_Archive.');
+    }
+
+    $ok = 0;
+    $fail = 0;
+    $fails = [];
+
+    foreach ($ids as $vote_post_id) {
+
+        if (class_exists('Spolek_Audit')) {
+            Spolek_Audit::log($vote_post_id, get_current_user_id(), Spolek_Audit_Events::PURGE_MANUAL_START, [
+                'bulk' => 1,
+            ]);
+        }
+
+        $res = Spolek_Archive::purge_vote((int)$vote_post_id);
+
+        if (is_array($res) && !empty($res['ok'])) {
+            $ok++;
+            if (class_exists('Spolek_Audit')) {
+                Spolek_Audit::log($vote_post_id, get_current_user_id(), Spolek_Audit_Events::PURGE_MANUAL_DONE, [
+                    'bulk' => 1,
+                ]);
+            }
+        } else {
+            $fail++;
+            $err = is_array($res) ? (string)($res['error'] ?? 'Purge selhal') : 'Purge selhal';
+            if (class_exists('Spolek_Audit')) {
+                Spolek_Audit::log($vote_post_id, get_current_user_id(), Spolek_Audit_Events::PURGE_MANUAL_FAIL, [
+                    'bulk'  => 1,
+                    'error' => $err,
+                ]);
+            }
+            if (count($fails) < 5) {
+                $fails[] = '#' . (int)$vote_post_id . ': ' . $err;
+            }
+        }
+    }
+
+    $msg = 'Hromadné smazání dokončeno. OK: ' . (int)$ok . ', chyby: ' . (int)$fail . '.';
+    if ($fails) {
+        $msg .= ' (' . implode(', ', $fails) . ')';
+    }
+
+    $args = ['notice' => $msg];
+    if ($ok > 0 && $fail === 0) $args['purged'] = 1;
+
+    Spolek_Admin::redirect_with_args($return_to, $args);
+}
+
+
+public static function handle_test_archive_storage(): void {
         Spolek_Admin::require_manager();
         Spolek_Admin::verify_nonce_post('spolek_test_archive_storage');
 

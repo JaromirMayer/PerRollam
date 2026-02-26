@@ -4,7 +4,7 @@
 
 namespace Composer\Autoload;
 
-class ComposerStaticInitac2d307f4ed514763a8119f3523066bb
+class ComposerStaticInit00da199c24f69d4e39903c3676bfe248
 {
     public static $files = array (
         '72243e5536b63e298acb6476f01f1aff' => __DIR__ . '/..' . '/thecodingmachine/safe/lib/special_cases.php',
@@ -87,6 +87,8 @@ class ComposerStaticInitac2d307f4ed514763a8119f3523066bb
         '4af1dca6db8c527c6eed27bff85ff0e5' => __DIR__ . '/..' . '/thecodingmachine/safe/generated/yaz.php',
         'fe43ca06499ac37bc2dedd823af71eb5' => __DIR__ . '/..' . '/thecodingmachine/safe/generated/zip.php',
         '356736db98a6834f0a886b8d509b0ecd' => __DIR__ . '/..' . '/thecodingmachine/safe/generated/zlib.php',
+        '0174385c3be07e86008907d06ee66531' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Rule/Rule.php',
+        '98aea6e41b9cb79b379b10f37ba1f0b7' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/RuleSet/RuleContainer.php',
     );
 
     public static $prefixLengthsPsr4 = array (
@@ -296,17 +298,22 @@ class ComposerStaticInitac2d307f4ed514763a8119f3523066bb
         'Sabberworm\\CSS\\Property\\AtRule' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Property/AtRule.php',
         'Sabberworm\\CSS\\Property\\CSSNamespace' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Property/CSSNamespace.php',
         'Sabberworm\\CSS\\Property\\Charset' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Property/Charset.php',
+        'Sabberworm\\CSS\\Property\\Declaration' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Property/Declaration.php',
         'Sabberworm\\CSS\\Property\\Import' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Property/Import.php',
         'Sabberworm\\CSS\\Property\\KeyframeSelector' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Property/KeyframeSelector.php',
         'Sabberworm\\CSS\\Property\\Selector' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Property/Selector.php',
+        'Sabberworm\\CSS\\Property\\Selector\\Combinator' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Property/Selector/Combinator.php',
+        'Sabberworm\\CSS\\Property\\Selector\\Component' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Property/Selector/Component.php',
+        'Sabberworm\\CSS\\Property\\Selector\\CompoundSelector' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Property/Selector/CompoundSelector.php',
         'Sabberworm\\CSS\\Property\\Selector\\SpecificityCalculator' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Property/Selector/SpecificityCalculator.php',
         'Sabberworm\\CSS\\Renderable' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Renderable.php',
         'Sabberworm\\CSS\\RuleSet\\AtRuleSet' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/RuleSet/AtRuleSet.php',
         'Sabberworm\\CSS\\RuleSet\\DeclarationBlock' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/RuleSet/DeclarationBlock.php',
-        'Sabberworm\\CSS\\RuleSet\\RuleContainer' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/RuleSet/RuleContainer.php',
+        'Sabberworm\\CSS\\RuleSet\\DeclarationList' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/RuleSet/DeclarationList.php',
+        'Sabberworm\\CSS\\RuleSet\\LegacyDeclarationListMethods' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/RuleSet/LegacyDeclarationListMethods.php',
         'Sabberworm\\CSS\\RuleSet\\RuleSet' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/RuleSet/RuleSet.php',
-        'Sabberworm\\CSS\\Rule\\Rule' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Rule/Rule.php',
         'Sabberworm\\CSS\\Settings' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Settings.php',
+        'Sabberworm\\CSS\\ShortClassNameProvider' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/ShortClassNameProvider.php',
         'Sabberworm\\CSS\\Value\\CSSFunction' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Value/CSSFunction.php',
         'Sabberworm\\CSS\\Value\\CSSString' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Value/CSSString.php',
         'Sabberworm\\CSS\\Value\\CalcFunction' => __DIR__ . '/..' . '/sabberworm/php-css-parser/src/Value/CalcFunction.php',
@@ -402,18 +409,29 @@ class ComposerStaticInitac2d307f4ed514763a8119f3523066bb
         'Safe\\Exceptions\\YazException' => __DIR__ . '/..' . '/thecodingmachine/safe/generated/Exceptions/YazException.php',
         'Safe\\Exceptions\\ZipException' => __DIR__ . '/..' . '/thecodingmachine/safe/generated/Exceptions/ZipException.php',
         'Safe\\Exceptions\\ZlibException' => __DIR__ . '/..' . '/thecodingmachine/safe/generated/Exceptions/ZlibException.php',
+        'Spolek_Admin' => __DIR__ . '/../..' . '/includes/class-spolek-admin.php',
         'Spolek_Archive' => __DIR__ . '/../..' . '/includes/class-spolek-archive.php',
         'Spolek_Archive_Controller' => __DIR__ . '/../..' . '/includes/class-spolek-archive-controller.php',
         'Spolek_Audit' => __DIR__ . '/../..' . '/includes/class-spolek-audit.php',
+        'Spolek_Audit_Events' => __DIR__ . '/../..' . '/includes/class-spolek-audit-events.php',
         'Spolek_Config' => __DIR__ . '/../..' . '/includes/class-spolek-config.php',
         'Spolek_Cron' => __DIR__ . '/../..' . '/includes/class-spolek-cron.php',
+        'Spolek_Cron_Controller' => __DIR__ . '/../..' . '/includes/class-spolek-cron-controller.php',
+        'Spolek_Cron_Status' => __DIR__ . '/../..' . '/includes/class-spolek-cron-status.php',
         'Spolek_Hlasovani_MVP' => __DIR__ . '/../..' . '/includes/class-spolek-legacy.php',
         'Spolek_Mailer' => __DIR__ . '/../..' . '/includes/class-spolek-mailer.php',
         'Spolek_PDF' => __DIR__ . '/../..' . '/includes/class-spolek-pdf.php',
         'Spolek_PDF_Controller' => __DIR__ . '/../..' . '/includes/class-spolek-pdf-controller.php',
+        'Spolek_PDF_Service' => __DIR__ . '/../..' . '/includes/class-spolek-pdf-service.php',
         'Spolek_Plugin' => __DIR__ . '/../..' . '/includes/class-spolek-plugin.php',
         'Spolek_Portal' => __DIR__ . '/../..' . '/includes/class-spolek-portal.php',
+        'Spolek_Portal_Renderer' => __DIR__ . '/../..' . '/includes/class-spolek-portal-renderer.php',
+        'Spolek_Self_Heal' => __DIR__ . '/../..' . '/includes/class-spolek-self-heal.php',
+        'Spolek_Tools' => __DIR__ . '/../..' . '/includes/class-spolek-tools.php',
+        'Spolek_Tools_Controller' => __DIR__ . '/../..' . '/includes/class-spolek-tools-controller.php',
+        'Spolek_Upgrade' => __DIR__ . '/../..' . '/includes/class-spolek-upgrade.php',
         'Spolek_Vote_Processor' => __DIR__ . '/../..' . '/includes/class-spolek-vote-processor.php',
+        'Spolek_Vote_Service' => __DIR__ . '/../..' . '/includes/class-spolek-vote-service.php',
         'Spolek_Votes' => __DIR__ . '/../..' . '/includes/class-spolek-votes.php',
         'Spolek_Votes_Controller' => __DIR__ . '/../..' . '/includes/class-spolek-votes-controller.php',
         'Svg\\CssLength' => __DIR__ . '/..' . '/dompdf/php-svg-lib/src/Svg/CssLength.php',
@@ -450,9 +468,9 @@ class ComposerStaticInitac2d307f4ed514763a8119f3523066bb
     public static function getInitializer(ClassLoader $loader)
     {
         return \Closure::bind(function () use ($loader) {
-            $loader->prefixLengthsPsr4 = ComposerStaticInitac2d307f4ed514763a8119f3523066bb::$prefixLengthsPsr4;
-            $loader->prefixDirsPsr4 = ComposerStaticInitac2d307f4ed514763a8119f3523066bb::$prefixDirsPsr4;
-            $loader->classMap = ComposerStaticInitac2d307f4ed514763a8119f3523066bb::$classMap;
+            $loader->prefixLengthsPsr4 = ComposerStaticInit00da199c24f69d4e39903c3676bfe248::$prefixLengthsPsr4;
+            $loader->prefixDirsPsr4 = ComposerStaticInit00da199c24f69d4e39903c3676bfe248::$prefixDirsPsr4;
+            $loader->classMap = ComposerStaticInit00da199c24f69d4e39903c3676bfe248::$classMap;
 
         }, null, ClassLoader::class);
     }

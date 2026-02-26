@@ -659,6 +659,10 @@ final class Spolek_Portal_Renderer {
         }
 
         $counts_bulk = class_exists('Spolek_Votes') ? Spolek_Votes::get_counts_bulk($ids) : [];
+
+
+
+
         $members_total = class_exists('Spolek_Vote_Service') ? count(Spolek_Vote_Service::get_members()) : 0;
         $tz = wp_timezone();
 
@@ -809,8 +813,50 @@ final class Spolek_Portal_Renderer {
             }
             $counts_bulk = class_exists('Spolek_Votes') ? Spolek_Votes::get_counts_bulk($ids) : [];
 
+
+
+// Bulk purge (UX): checkboxy + hromadné smazání z DB
+$bulk_form_id = 'spolek-archive-bulk-purge-form';
+$bulk_action = esc_url(admin_url('admin-post.php'));
+$html .= '<form id="'.esc_attr($bulk_form_id).'" method="post" action="'.$bulk_action.'" style="margin:8px 0 10px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;" onsubmit="return confirm(\'Opravdu smazat vybraná hlasování z databáze? Archivní ZIPy zůstanou uloženy.\');">';
+$html .= '<input type="hidden" name="action" value="spolek_purge_votes">';
+$html .= wp_nonce_field('spolek_purge_votes', '_nonce', true, false);
+$html .= '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">';
+$html .= '<button type="submit" class="button button-secondary" disabled data-spolek-bulk-btn="1">Smazat vybrané z DB</button>';
+$html .= '<span style="opacity:.8;font-size:12px;" data-spolek-bulk-count="1">Vybráno: 0</span>';
+$html .= '<span style="opacity:.75;font-size:12px;">(lze jen když je uložen ZIP a sedí SHA)</span>';
+$html .= '</form>';
+
+$html .= '<script>(function(){'
+    . 'function qsa(sel){return Array.prototype.slice.call(document.querySelectorAll(sel));}'
+    . 'var form=document.getElementById("spolek-archive-bulk-purge-form"); if(!form) return;'
+    . 'var btn=form.querySelector("[data-spolek-bulk-btn]");'
+    . 'var cnt=form.querySelector("[data-spolek-bulk-count]");'
+    . 'var all=document.getElementById("spolek-archive-select-all");'
+    . 'function update(){'
+        . 'var cbs=qsa("input.spolek-archive-bulk");'
+        . 'var n=0; cbs.forEach(function(cb){ if(cb.checked) n++; });'
+        . 'if(btn) btn.disabled = (n===0);'
+        . 'if(cnt) cnt.textContent = "Vybráno: " + n;'
+        . 'if(all){'
+            . 'var enabled=cbs.filter(function(cb){return !cb.disabled;});'
+            . 'var checked=enabled.filter(function(cb){return cb.checked;});'
+            . 'all.indeterminate = (checked.length>0 && checked.length<enabled.length);'
+            . 'all.checked = (enabled.length>0 && checked.length===enabled.length);'
+        . '}'
+    . '}'
+    . 'qsa("input.spolek-archive-bulk").forEach(function(cb){ cb.addEventListener("change",update); });'
+    . 'if(all){'
+        . 'all.addEventListener("change",function(){'
+            . 'qsa("input.spolek-archive-bulk").forEach(function(cb){ if(!cb.disabled) cb.checked = all.checked; });'
+            . 'update();'
+        . '});'
+    . '}'
+    . 'update();'
+. '})();</script>';
             $html .= '<table style="width:100%;border-collapse:collapse;">';
             $html .= '<thead><tr>'
+                . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;width:1%;"><input type="checkbox" id="spolek-archive-select-all" title="Vybrat vše"></th>'
                 . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Hlasování</th>'
                 . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Ukončeno</th>'
                 . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Zpracováno</th>'
@@ -829,6 +875,15 @@ final class Spolek_Portal_Renderer {
                 $sha  = (string) get_post_meta($id, Spolek_Config::META_ARCHIVE_SHA256, true);
                 $err  = (string) get_post_meta($id, Spolek_Config::META_ARCHIVE_ERROR, true);
 
+$processed_ok = ($processed_at !== '');
+$file_base = basename((string)$file);
+$has_file = false;
+if ($processed_ok && $file_base !== '') {
+    $path = Spolek_Archive::locate_path($file_base);
+    if ($path && is_file($path)) $has_file = true;
+}
+
+
                 $end_label = $end_ts ? wp_date('j.n.Y H:i', (int)$end_ts, wp_timezone()) : '–';
                 $proc_label = $processed_at ? wp_date('j.n.Y H:i', (int)$processed_at, wp_timezone()) : '–';
 
@@ -845,7 +900,18 @@ final class Spolek_Portal_Renderer {
 
                 $detail_link = self::detail_url($id);
 
+
+
+$bulk_cb = '';
+if (!$processed_ok) {
+    $bulk_cb = '<input type="checkbox" disabled title="Čeká na uzávěrku (cron).">';
+} elseif (!$has_file) {
+    $bulk_cb = '<input type="checkbox" disabled title="Chybí archiv ZIP.">';
+} else {
+    $bulk_cb = '<input type="checkbox" class="spolek-archive-bulk" name="vote_post_ids[]" value="'.(int)$id.'" form="spolek-archive-bulk-purge-form">';
+}
                 $html .= '<tr>';
+                $html .= '<td style="border-bottom:1px solid #eee;padding:6px;">' . $bulk_cb . '</td>';
                 $html .= '<td style="border-bottom:1px solid #eee;padding:6px;">'
                     . '<a href="'.esc_url($detail_link).'">'.esc_html(get_the_title()).'</a>'
                     . '</td>';
@@ -856,60 +922,56 @@ final class Spolek_Portal_Renderer {
 
                 $html .= '<td style="border-bottom:1px solid #eee;padding:6px;">';
 
-                // pokud ještě není uzávěrka hotová, nearchivujeme
-                if (!$processed_at) {
-                    $html .= '<span style="opacity:.8;">Čeká na uzávěrku (cron).</span>';
-                } else {
-                    $has_file = false;
-                    $file = basename($file);
-                    if ($file !== '') {
-                        $path = Spolek_Archive::locate_path($file);
-                        if ($path) $has_file = true;
-                    }
+                
+// pokud ještě není uzávěrka hotová, nearchivujeme
+if (!$processed_ok) {
+    $html .= '<span style="opacity:.8;">Čeká na uzávěrku (cron).</span>';
+} else {
+    if ($has_file) {
+        $file = $file_base;
 
-                    if ($has_file) {
-                        $dl = admin_url('admin-post.php');
-                        $dl = add_query_arg([
-                            'action' => 'spolek_download_archive',
-                            'file'   => $file,
-                            '_nonce' => wp_create_nonce('spolek_download_archive_' . $file),
-                        ], $dl);
+        $dl = admin_url('admin-post.php');
+        $dl = add_query_arg([
+            'action' => 'spolek_download_archive',
+            'file'   => $file,
+            '_nonce' => wp_create_nonce('spolek_download_archive_' . $file),
+        ], $dl);
 
-                        $purge_action = esc_url(admin_url('admin-post.php'));
+        $purge_action = esc_url(admin_url('admin-post.php'));
 
-                        $html .= '<a class="button" href="'.esc_url($dl).'">Stáhnout archiv ZIP</a> ';
+        $html .= '<a class="button" href="'.esc_url($dl).'">Stáhnout archiv ZIP</a> ';
 
-                        $html .= '<form method="post" action="'.$purge_action.'" style="display:inline-block;margin-left:8px;" onsubmit="return confirm(\'Opravdu smazat hlasování #' . (int)$id . ' z databáze? Archivní ZIP zůstane uložen.\');">';
-                        $html .= '<input type="hidden" name="action" value="spolek_purge_vote">';
-                        $html .= '<input type="hidden" name="vote_post_id" value="'.(int)$id.'">';
-                        $html .= wp_nonce_field('spolek_purge_vote_'.$id, '_nonce', true, false);
-                        $html .= '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">';
-                        $html .= '<button type="submit">Smazat z DB</button>';
-                        $html .= '</form>';
+        $html .= '<form method="post" action="'.$purge_action.'" style="display:inline-block;margin-left:8px;" onsubmit="return confirm(\'Opravdu smazat hlasování #' . (int)$id . ' z databáze? Archivní ZIP zůstane uložen.\');">';
+        $html .= '<input type="hidden" name="action" value="spolek_purge_vote">';
+        $html .= '<input type="hidden" name="vote_post_id" value="'.(int)$id.'">';
+        $html .= wp_nonce_field('spolek_purge_vote_'.$id, '_nonce', true, false);
+        $html .= '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">';
+        $html .= '<button type="submit">Smazat z DB</button>';
+        $html .= '</form>';
 
-                        if ($sha) {
-                            $html .= '<div style="margin-top:4px;opacity:.75;font-size:12px;">SHA256: '.esc_html($sha).'</div>';
-                        }
-                    } else {
-                        // vytvořit archiv
-                        $archive_action = esc_url(admin_url('admin-post.php'));
-                        $html .= '<form method="post" action="'.$archive_action.'" style="display:inline-block;">';
-                        $html .= '<input type="hidden" name="action" value="spolek_archive_vote">';
-                        $html .= '<input type="hidden" name="vote_post_id" value="'.(int)$id.'">';
-                        $html .= wp_nonce_field('spolek_archive_vote_'.$id, '_nonce', true, false);
-                        $html .= '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">';
-                        $html .= '<button type="submit">Zálohovat nyní</button>';
-                        $html .= '</form>';
+        if ($sha) {
+            $html .= '<div style="margin-top:4px;opacity:.75;font-size:12px;">SHA256: '.esc_html($sha).'</div>';
+        }
+    } else {
+        // vytvořit archiv
+        $archive_action = esc_url(admin_url('admin-post.php'));
+        $html .= '<form method="post" action="'.$archive_action.'" style="display:inline-block;">';
+        $html .= '<input type="hidden" name="action" value="spolek_archive_vote">';
+        $html .= '<input type="hidden" name="vote_post_id" value="'.(int)$id.'">';
+        $html .= wp_nonce_field('spolek_archive_vote_'.$id, '_nonce', true, false);
+        $html .= '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">';
+        $html .= '<button type="submit">Zálohovat nyní</button>';
+        $html .= '</form>';
 
-                        if ($err) {
-                            $html .= '<div style="margin-top:4px;color:#b00;font-size:12px;">Chyba archivace: '.esc_html($err).'</div>';
-                        } else {
-                            $html .= '<div style="margin-top:4px;opacity:.75;font-size:12px;">Automaticky se pokusí vytvořit i cron po uzávěrce.</div>';
-                        }
-                    }
-                }
+        if ($err) {
+            $html .= '<div style="margin-top:4px;color:#b00;font-size:12px;">Chyba archivace: '.esc_html($err).'</div>';
+        } else {
+            $html .= '<div style="margin-top:4px;opacity:.75;font-size:12px;">Automaticky se pokusí vytvořit i cron po uzávěrce.</div>';
+        }
+    }
+}
 
-                $html .= '</td>';
+$html .= '</td>';
                 $html .= '</tr>';
             }
             wp_reset_postdata();
