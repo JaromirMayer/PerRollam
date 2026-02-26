@@ -248,7 +248,33 @@ final class Spolek_PDF_Service {
         if ($vid !== '') {
             $vid = strtolower(trim($vid));
             if (!self::validate_member_link_v2($vid, $current_uid, $exp, $sig)) {
-                wp_die('Neplatný odkaz.');
+                // Manager může potřebovat otevřít link, který mu přišel na jiný účet / během testování.
+                // Pro běžné členy zůstává link pevně vázaný na uživatele.
+                if (self::is_manager()) {
+                    $signed_uid = self::find_uid_for_sig_v2($vid, $exp, $sig);
+
+                    // Pokud jsme našli uživatele, pro kterého byl link podepsaný, dovol managerovi download.
+                    if ($signed_uid > 0) {
+                        Spolek_Audit::log(null, $current_uid, 'pdf.link.bypass', [
+                            'vid' => $vid,
+                            'exp' => $exp,
+                            'signed_uid' => $signed_uid,
+                            'current_uid' => $current_uid,
+                        ]);
+                    } else {
+                        Spolek_Audit::log(null, $current_uid, 'pdf.link.invalid', [
+                            'vid' => $vid,
+                            'exp' => $exp,
+                        ]);
+                        wp_die('Neplatný odkaz.');
+                    }
+                } else {
+                    Spolek_Audit::log(null, $current_uid, 'pdf.link.invalid', [
+                        'vid' => $vid,
+                        'exp' => $exp,
+                    ]);
+                    wp_die('Neplatný odkaz. Pokud jste přihlášen(a) jiným účtem než příjemce e-mailu, odhlaste se a přihlaste se správným uživatelem.');
+                }
             }
 
             if (!class_exists('Spolek_Vote_Service')) {
@@ -448,5 +474,37 @@ final class Spolek_PDF_Service {
         $user  = wp_get_current_user();
         $roles = (array)$user->roles;
         return in_array('clen', $roles, true) || in_array('spravce_hlasovani', $roles, true);
+    }
+
+    /**
+     * Najdi uživatele, pro kterého byl v2 podpis vytvořen (jen pro správce / diagnostiku).
+     * Vrací 0 když nenalezeno.
+     */
+    private static function find_uid_for_sig_v2(string $vote_public_id, int $exp, string $sig): int {
+        $vote_public_id = strtolower(trim((string)$vote_public_id));
+        if ($vote_public_id === '' || $exp <= 0 || $sig === '') return 0;
+
+        // Preferuj cache členů (role__in) – je to přesně skupina, které se e-maily posílají.
+        $users = [];
+        if (class_exists('Spolek_Vote_Service')) {
+            $users = (array) Spolek_Vote_Service::get_members();
+        } else {
+            $users = (array) get_users(['number' => 400]);
+        }
+
+        $checked = 0;
+        foreach ($users as $u) {
+            $uid = (int)($u->ID ?? 0);
+            if ($uid <= 0) continue;
+            $checked++;
+            // hard cap pro jistotu
+            if ($checked > 500) break;
+
+            $expected = self::member_sig_v2($uid, $vote_public_id, $exp);
+            if (hash_equals($expected, $sig)) {
+                return $uid;
+            }
+        }
+        return 0;
     }
 }
