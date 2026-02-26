@@ -113,6 +113,92 @@ final class Spolek_Archive {
         return $items;
     }
 
+    /** Je položka indexu označená jako skrytá? */
+    public static function is_hidden_item(array $it): bool {
+        return !empty($it['hidden']) || !empty($it['hidden_at']);
+    }
+
+    /**
+     * 6.4.4 – automatické čištění indexu (označit/skrýt záznamy, kde ZIP reálně zmizel a hlasování už je po purge).
+     * @return array{hidden_new:int,unhidden:int,changed:int}
+     */
+    public static function cleanup_index(bool $force = false): array {
+        self::ensure_storage();
+
+        // Rate-limit: i když to někdo kliká opakovaně, index nebudeme přepisovat každou sekundu.
+        if (!$force) {
+            $key = 'spolek_arch_index_cleanup';
+            if (get_transient($key)) {
+                return ['hidden_new' => 0, 'unhidden' => 0, 'changed' => 0];
+            }
+            set_transient($key, 1, 6 * HOUR_IN_SECONDS);
+        }
+
+        $data = self::read_index();
+        $items = (array)($data['items'] ?? []);
+        if (!$items) return ['hidden_new' => 0, 'unhidden' => 0, 'changed' => 0];
+
+        $now = time();
+        $hidden_new = 0;
+        $unhidden = 0;
+        $changed = 0;
+
+        foreach ($items as $k => $it) {
+            if (!is_array($it)) continue;
+
+            $vote_id = (int)($it['vote_post_id'] ?? 0);
+            $file = basename((string)($it['file'] ?? ''));
+            $storage = !empty($it['storage']) ? (string)$it['storage'] : null;
+
+            $loc = ($file !== '') ? self::locate($file, $storage) : null;
+            $file_exists = ($loc && !empty($loc['path']) && is_file((string)$loc['path']));
+
+            $post_exists = true;
+            if ($vote_id > 0) {
+                $post_exists = (bool) get_post($vote_id);
+            }
+
+            $purged = !empty($it['purged_at']);
+            $hidden = self::is_hidden_item($it);
+
+            $should_hide = (!$file_exists) && ($purged || !$post_exists);
+
+            if ($should_hide && !$hidden) {
+                $items[$k]['hidden'] = 1;
+                $items[$k]['hidden_at'] = $now;
+                $items[$k]['hidden_reason'] = $purged ? 'missing_after_purge' : 'missing_no_post';
+                $hidden_new++;
+                $changed++;
+            }
+
+            // Pokud byl soubor obnoven, záznam znovu odskryjeme.
+            if ($file_exists && $hidden) {
+                $reason = (string)($it['hidden_reason'] ?? '');
+                if ($reason === 'missing_after_purge' || $reason === 'missing_no_post' || $reason === '') {
+                    unset($items[$k]['hidden'], $items[$k]['hidden_at'], $items[$k]['hidden_reason']);
+                    $unhidden++;
+                    $changed++;
+                }
+            }
+        }
+
+        if ($changed > 0) {
+            $data['version'] = 2;
+            $data['items'] = array_values($items);
+            self::write_index($data);
+
+            if (class_exists('Spolek_Audit') && class_exists('Spolek_Audit_Events')) {
+                $uid = is_user_logged_in() ? (int) get_current_user_id() : null;
+                Spolek_Audit::log(null, $uid ?: null, Spolek_Audit_Events::ARCHIVE_INDEX_CLEANUP, [
+                    'hidden_new' => $hidden_new,
+                    'unhidden'   => $unhidden,
+                ]);
+            }
+        }
+
+        return ['hidden_new' => $hidden_new, 'unhidden' => $unhidden, 'changed' => $changed];
+    }
+
     /** Najde položku indexu podle vote_post_id. */
     public static function find_by_vote(int $vote_post_id): ?array {
         $vote_post_id = (int)$vote_post_id;

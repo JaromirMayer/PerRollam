@@ -37,6 +37,9 @@ final class Spolek_Portal_Renderer {
 
         $out = '';
 
+        // Flash zprávy (success/error) – jednotně nahoře
+        $out .= self::render_flash_messages();
+
         // Detail? (preferujeme veřejný token v=...)
         $vote_id = 0;
         $public = isset($_GET['v']) ? sanitize_text_field(wp_unslash((string)$_GET['v'])) : '';
@@ -74,9 +77,9 @@ final class Spolek_Portal_Renderer {
             $out .= self::render_section_sep();
             $out .= self::render_purged_archives_panel();
 
-            // 6.1 – Cron status (diagnostika)
+            // 6.4 – Nástroje + healthcheck
             $out .= self::render_section_sep();
-            $out .= self::render_cron_status_panel();
+            $out .= self::render_tools_panel();
         } else {
             // Uzavřená hlasování (pro členy – jen pro čtení)
             $out .= self::render_section_sep();
@@ -111,6 +114,69 @@ final class Spolek_Portal_Renderer {
         return '<hr class="spolek-section-sep">';
     }
 
+    /** Jednotné flash zprávy pro portál (notice/error). */
+    private static function render_flash_messages(): string {
+        $msgs = [];
+
+        if (!empty($_GET['created'])) {
+            $msgs[] = ['ok', 'Hlasování bylo vytvořeno.'];
+        }
+        if (!empty($_GET['voted'])) {
+            $msgs[] = ['ok', 'Hlas byl uložen.'];
+        }
+        if (!empty($_GET['archived'])) {
+            $msgs[] = ['ok', 'Archiv byl vytvořen.'];
+        }
+        if (!empty($_GET['purged'])) {
+            $msgs[] = ['ok', 'Hlasování bylo smazáno z databáze (archivní ZIP zůstal uložen).'];
+        }
+        if (!empty($_GET['notice'])) {
+            $msgs[] = ['ok', (string) sanitize_text_field(wp_unslash((string)$_GET['notice']))];
+        }
+        if (!empty($_GET['err'])) {
+            $raw = (string) sanitize_text_field(wp_unslash((string)$_GET['err']));
+            $msgs[] = ['err', self::humanize_error($raw)];
+        }
+
+        if (!$msgs) return '';
+
+        $out = '';
+        foreach ($msgs as $m) {
+            $type = (string)($m[0] ?? 'ok');
+            $text = (string)($m[1] ?? '');
+            if ($text === '') continue;
+
+            $bg = ($type === 'err') ? '#fff5f5' : '#f0f6ff';
+            $bd = ($type === 'err') ? '#d63638' : '#2271b1';
+
+            $out .= '<div style="margin:10px 0;padding:10px 12px;border:1px solid ' . esc_attr($bd) . ';background:' . esc_attr($bg) . ';border-radius:8px;">'
+                 . '<strong>' . esc_html($text) . '</strong>'
+                 . '</div>';
+        }
+
+        return $out;
+    }
+
+    /** Zlidštění technických chyb (6.4.3). */
+    private static function humanize_error(string $raw): string {
+        $raw = trim((string)$raw);
+        if ($raw === '') return 'Došlo k chybě.';
+
+        // Typické technické chyby → lidské hlášky
+        if (stripos($raw, 'Chybí Spolek_') !== false || stripos($raw, 'Chybí třída') !== false) {
+            return 'Funkce není v této instalaci dostupná (chybí modul / soubor).';
+        }
+        if (stripos($raw, 'nonce') !== false) {
+            return 'Neplatný bezpečnostní token (nonce). Obnov stránku a zkus to znovu.';
+        }
+        if (stripos($raw, 'Rate limit') !== false || stripos($raw, 'Příliš mnoho') !== false) {
+            return 'Příliš mnoho požadavků v krátkém čase. Zkus to prosím za chvíli.';
+        }
+
+        // jinak necháme tak, jak je (už je většinou human-readable)
+        return $raw;
+    }
+
     private static function portal_url(): string {
         // aktuální URL stránky bez query
         return remove_query_arg([
@@ -130,7 +196,7 @@ final class Spolek_Portal_Renderer {
     }
 
     /** 6.1.4 – Cron status (jen pro správce). */
-    private static function render_cron_status_panel(): string {
+    private static function render_cron_status_panel(string $heading_tag = 'h2'): string {
         if (!self::is_manager()) return '';
 
         $now = time();
@@ -163,7 +229,8 @@ final class Spolek_Portal_Renderer {
 
         $action = esc_url(admin_url('admin-post.php'));
 
-        $html  = '<h2>Cron status</h2>';
+        $heading_tag = in_array($heading_tag, ['h2','h3','h4'], true) ? $heading_tag : 'h2';
+        $html  = '<' . $heading_tag . '>Cron status</' . $heading_tag . '>';
         $html .= '<div style="opacity:.85;">Serverový čas: <strong>'
               . esc_html(wp_date('j.n.Y H:i:s', $now, $tz))
               . '</strong></div>';
@@ -267,6 +334,83 @@ final class Spolek_Portal_Renderer {
               . '<pre style="background:#f6f7f7;border:1px solid #ddd;padding:10px;border-radius:8px;overflow:auto;">'
               . '*/5 * * * * curl -fsS "' . $wp_cron_url . '" > /dev/null 2>&1'
               . '</pre>';
+
+        return $html;
+    }
+
+    /** 6.4.2 – Jedno místo pro Nástroje (test mailu/PDF, healthcheck, cron). */
+    private static function render_tools_panel(): string {
+        if (!self::is_manager()) return '';
+
+        $action = esc_url(admin_url('admin-post.php'));
+
+        $html  = '<h2>Nástroje</h2>';
+        $html .= '<div style="opacity:.8;margin:6px 0 10px 0;">Testy a provozní diagnostika na jednom místě.</div>';
+
+        // Healthcheck
+        $checks = class_exists('Spolek_Tools') ? (array) Spolek_Tools::healthcheck() : [];
+        if ($checks) {
+            $html .= '<h3>Healthcheck</h3>';
+            $html .= '<table style="width:100%;border-collapse:collapse;">'
+                  . '<thead><tr>'
+                  . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Kontrola</th>'
+                  . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Stav</th>'
+                  . '</tr></thead><tbody>';
+
+            foreach ($checks as $c) {
+                $label = (string)($c['label'] ?? ($c['key'] ?? ''));
+                $status = (string)($c['status'] ?? 'ok');
+                $msg = (string)($c['message'] ?? '');
+
+                $icon = ($status === 'error') ? '❌' : (($status === 'warn') ? '⚠️' : '✅');
+                $html .= '<tr>'
+                      . '<td style="border-bottom:1px solid #eee;padding:6px;">' . esc_html($label) . '</td>'
+                      . '<td style="border-bottom:1px solid #eee;padding:6px;">' . $icon . ' ' . esc_html($msg) . '</td>'
+                      . '</tr>';
+            }
+
+            $html .= '</tbody></table>';
+        }
+
+        // Test tlačítka
+        $html .= '<h3 style="margin-top:14px;">Testy</h3>';
+        $html .= '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">';
+
+        $html .= '<form method="post" action="'.$action.'" style="margin:0;">'
+            . '<input type="hidden" name="action" value="spolek_tools_test_mail">'
+            . wp_nonce_field('spolek_tools_test_mail', '_nonce', true, false)
+            . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
+            . '<button type="submit">Test e-mailu</button>'
+            . '</form>';
+
+        $html .= '<form method="post" action="'.$action.'" style="margin:0;">'
+            . '<input type="hidden" name="action" value="spolek_tools_test_pdf">'
+            . wp_nonce_field('spolek_tools_test_pdf', '_nonce', true, false)
+            . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
+            . '<button type="submit">Test PDF (stáhnout)</button>'
+            . '</form>';
+
+        $html .= '<form method="post" action="'.$action.'" style="margin:0;">'
+            . '<input type="hidden" name="action" value="spolek_test_archive_storage">'
+            . wp_nonce_field('spolek_test_archive_storage', '_nonce', true, false)
+            . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
+            . '<button type="submit">Test úložiště archivů</button>'
+            . '</form>';
+
+        $html .= '<form method="post" action="'.$action.'" style="margin:0;">'
+            . '<input type="hidden" name="action" value="spolek_tools_cleanup_index">'
+            . wp_nonce_field('spolek_tools_cleanup_index', '_nonce', true, false)
+            . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
+            . '<button type="submit">Vyčistit index archivů</button>'
+            . '</form>';
+
+        $html .= '</div>';
+
+        // Cron status (detail)
+        $html .= '<details style="margin-top:14px;">'
+              . '<summary style="cursor:pointer;font-weight:600;">Cron status (detail + Run now)</summary>'
+              . '<div style="margin-top:10px;">' . self::render_cron_status_panel('h3') . '</div>'
+              . '</details>';
 
         return $html;
     }
@@ -416,12 +560,7 @@ final class Spolek_Portal_Renderer {
         $default_end = $now + (7 * DAY_IN_SECONDS);
 
         $html  = '<h2>Nové hlasování</h2>';
-        if (!empty($_GET['created'])) {
-            $html .= '<p><strong>Hlasování bylo vytvořeno.</strong></p>';
-        }
-        if (!empty($_GET['err'])) {
-            $html .= '<p><strong style="color:#b00;">Chyba: ' . esc_html((string)$_GET['err']) . '</strong></p>';
-        }
+        // flash zprávy se zobrazují jednotně nahoře
 
         $html .= '<form method="post" action="'.$action.'">';
         $html .= '<input type="hidden" name="action" value="spolek_create_vote">';
@@ -506,26 +645,107 @@ final class Spolek_Portal_Renderer {
             return $html . '<p>Zatím není vyhlášeno žádné hlasování.</p>';
         }
 
-        $html .= '<ul>';
-        while ($q->have_posts()) {
-            $q->the_post();
-            $id = get_the_ID();
-            [$start_ts, $end_ts] = self::vote_meta($id);
+        $posts = (array)($q->posts ?? []);
+        $ids = [];
+        foreach ($posts as $p) {
+            if (is_object($p) && !empty($p->ID)) $ids[] = (int)$p->ID;
+        }
 
+        $counts_bulk = class_exists('Spolek_Votes') ? Spolek_Votes::get_counts_bulk($ids) : [];
+        $members_total = class_exists('Spolek_Vote_Service') ? count(Spolek_Vote_Service::get_members()) : 0;
+        $tz = wp_timezone();
+
+        // ČLEN – jednoduchý seznam
+        if (!self::is_manager()) {
+            $html .= '<ul>';
+            foreach ($ids as $id) {
+                [$start_ts, $end_ts] = self::vote_meta($id);
+                $status = self::vote_status($start_ts, $end_ts);
+                $label = $status === 'open' ? 'Otevřené' : ($status === 'closed' ? 'Ukončené' : 'Připravované');
+                $link = self::detail_url($id);
+
+                $html .= '<li>';
+                $html .= '<a href="'.esc_url($link).'">' . esc_html(get_the_title($id)) . '</a>';
+                $html .= ' — <em>' . esc_html($label) . '</em>';
+                if ($start_ts && $end_ts) {
+                    if ($status === 'open') {
+                        $left = human_time_diff($now, $end_ts);
+                        $html .= ' (končí ' . esc_html(wp_date('j.n.Y H:i', $end_ts, $tz)) . ', zbývá ' . esc_html($left) . ')';
+                    } else {
+                        $html .= ' (od ' . esc_html(wp_date('j.n.Y H:i', $start_ts, $tz)) . ' do ' . esc_html(wp_date('j.n.Y H:i', $end_ts, $tz)) . ')';
+                    }
+                }
+                $html .= '</li>';
+            }
+            $html .= '</ul>';
+
+            wp_reset_postdata();
+            return $html;
+        }
+
+        // SPRÁVCE – přehledová tabulka (6.4.1)
+        $html .= '<table style="width:100%;border-collapse:collapse;">'
+            . '<thead><tr>'
+            . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Hlasování</th>'
+            . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Stav</th>'
+            . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Deadline</th>'
+            . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Hlasy</th>'
+            . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Kvórum</th>'
+            . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Pass</th>'
+            . '</tr></thead><tbody>';
+
+        foreach ($ids as $id) {
+            [$start_ts, $end_ts] = self::vote_meta($id);
             $status = self::vote_status($start_ts, $end_ts);
-            $label = $status === 'open' ? 'Otevřené' : ($status === 'closed' ? 'Ukončené' : 'Připravované');
+            $status_label = ($status === 'open') ? 'Otevřené' : (($status === 'upcoming') ? 'Připravované' : 'Ukončené');
+
+            $counts = $counts_bulk[$id] ?? ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
+            $eval = class_exists('Spolek_Vote_Service')
+                ? Spolek_Vote_Service::evaluate_vote($id, $counts)
+                : ['participated'=>((int)$counts['ANO']+(int)$counts['NE']+(int)$counts['ZDRZEL']), 'members_total'=>$members_total, 'quorum_required'=>0, 'quorum_met'=>true, 'yes'=>(int)$counts['ANO'], 'yes_needed'=>PHP_INT_MAX];
+
+            $deadline = $end_ts ? wp_date('j.n.Y H:i', $end_ts, $tz) : '–';
+            if ($status === 'open' && $end_ts) {
+                $deadline .= ' <span style="opacity:.75;">(zbývá ' . esc_html(human_time_diff($now, $end_ts)) . ')</span>';
+            } elseif ($status === 'upcoming' && $start_ts) {
+                $deadline = wp_date('j.n.Y H:i', $start_ts, $tz) . ' <span style="opacity:.75;">(za ' . esc_html(human_time_diff($now, $start_ts)) . ')</span>';
+            }
+
+            $yes = (int)($counts['ANO'] ?? 0);
+            $no  = (int)($counts['NE'] ?? 0);
+            $ab  = (int)($counts['ZDRZEL'] ?? 0);
+            $part = (int)($eval['participated'] ?? ($yes+$no+$ab));
+
+            $votes_cell = 'ANO ' . $yes . ' / NE ' . $no . ' / ZDRŽEL ' . $ab . ' <span style="opacity:.75;">(celkem ' . $part . ')</span>';
+
+            $qr = (int)($eval['quorum_required'] ?? 0);
+            $qm = !empty($eval['quorum_met']);
+            $quorum_cell = ($qr > 0)
+                ? ($part . '/' . $qr . ' ' . ($qm ? '✅' : '❌'))
+                : ('bez kvóra <span style="opacity:.75;">(' . $part . '/' . (int)($eval['members_total'] ?? $members_total) . ')</span>');
+
+            $yn = (int)($eval['yes_needed'] ?? PHP_INT_MAX);
+            $pass_ok = ($qm && $yes >= $yn);
+            $pass_cell = ($yn === PHP_INT_MAX)
+                ? '–'
+                : ($yes . '/' . $yn . ' ' . ($pass_ok ? '✅' : '❌'));
 
             $link = self::detail_url($id);
-            $html .= '<li>';
-            $html .= '<a href="'.esc_url($link).'">' . esc_html(get_the_title()) . '</a>';
-            $html .= ' — <em>' . esc_html($label) . '</em>';
-            if ($start_ts && $end_ts) {
-                $html .= ' (od ' . esc_html(wp_date('j.n.Y H:i', $start_ts)) . ' do ' . esc_html(wp_date('j.n.Y H:i', $end_ts)) . ')';
-            }
-            $html .= '</li>';
+            $html .= '<tr>'
+                . '<td style="border-bottom:1px solid #eee;padding:6px;">'
+                . '<a href="'.esc_url($link).'">' . esc_html(get_the_title($id)) . '</a>'
+                . '</td>'
+                . '<td style="border-bottom:1px solid #eee;padding:6px;">' . esc_html($status_label) . '</td>'
+                . '<td style="border-bottom:1px solid #eee;padding:6px;">' . $deadline . '</td>'
+                . '<td style="border-bottom:1px solid #eee;padding:6px;">' . $votes_cell . '</td>'
+                . '<td style="border-bottom:1px solid #eee;padding:6px;">' . $quorum_cell . '</td>'
+                . '<td style="border-bottom:1px solid #eee;padding:6px;">' . $pass_cell . '</td>'
+                . '</tr>';
         }
+
+        $html .= '</tbody></table>';
+
         wp_reset_postdata();
-        $html .= '</ul>';
 
         return $html;
     }
@@ -536,16 +756,7 @@ final class Spolek_Portal_Renderer {
 
         $html = '<h2>Archiv uzavřených hlasování</h2>';
 
-        if (!empty($_GET['archived'])) {
-            $html .= '<p><strong>Archiv byl vytvořen.</strong></p>';
-        }
-        if (!empty($_GET['purged'])) {
-            $html .= '<p><strong>Hlasování bylo smazáno z databáze (archivní ZIP zůstal uložen).</strong></p>';
-        }
-
-        if (!empty($_GET['notice'])) {
-            $html .= '<p><strong>' . esc_html((string)$_GET['notice']) . '</strong></p>';
-        }
+        // flash zprávy se zobrazují jednotně nahoře
 
         $run_action = esc_url(admin_url('admin-post.php'));
         $html .= '<form method="post" action="'.$run_action.'" style="margin:8px 0 12px 0;">'
@@ -584,11 +795,20 @@ final class Spolek_Portal_Renderer {
         if (!$q->have_posts()) {
             $html .= '<p>Zatím nejsou žádná ukončená hlasování.</p>';
         } else {
+            $posts = (array)($q->posts ?? []);
+            $ids = [];
+            foreach ($posts as $p) {
+                if (is_object($p) && !empty($p->ID)) $ids[] = (int)$p->ID;
+            }
+            $counts_bulk = class_exists('Spolek_Votes') ? Spolek_Votes::get_counts_bulk($ids) : [];
+
             $html .= '<table style="width:100%;border-collapse:collapse;">';
             $html .= '<thead><tr>'
                 . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Hlasování</th>'
                 . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Ukončeno</th>'
                 . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Zpracováno</th>'
+                . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Výsledek</th>'
+                . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Hlasy</th>'
                 . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Archiv</th>'
                 . '</tr></thead><tbody>';
 
@@ -605,6 +825,17 @@ final class Spolek_Portal_Renderer {
                 $end_label = $end_ts ? wp_date('j.n.Y H:i', (int)$end_ts, wp_timezone()) : '–';
                 $proc_label = $processed_at ? wp_date('j.n.Y H:i', (int)$processed_at, wp_timezone()) : '–';
 
+                $counts = $counts_bulk[$id] ?? ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
+                $yes = (int)($counts['ANO'] ?? 0);
+                $no  = (int)($counts['NE'] ?? 0);
+                $ab  = (int)($counts['ZDRZEL'] ?? 0);
+
+                $res_label = (string) get_post_meta($id, Spolek_Config::META_RESULT_LABEL, true);
+                if ($res_label === '' && class_exists('Spolek_Vote_Service')) {
+                    $ev = Spolek_Vote_Service::evaluate_vote($id, $counts);
+                    $res_label = (string)($ev['label'] ?? '');
+                }
+
                 $detail_link = self::detail_url($id);
 
                 $html .= '<tr>';
@@ -613,6 +844,8 @@ final class Spolek_Portal_Renderer {
                     . '</td>';
                 $html .= '<td style="border-bottom:1px solid #eee;padding:6px;">'.esc_html($end_label).'</td>';
                 $html .= '<td style="border-bottom:1px solid #eee;padding:6px;">'.esc_html($proc_label).'</td>';
+                $html .= '<td style="border-bottom:1px solid #eee;padding:6px;">'.esc_html($res_label ?: '–').'</td>';
+                $html .= '<td style="border-bottom:1px solid #eee;padding:6px;">ANO '.(int)$yes.' / NE '.(int)$no.' / ZDRŽEL '.(int)$ab.'</td>';
 
                 $html .= '<td style="border-bottom:1px solid #eee;padding:6px;">';
 
@@ -686,6 +919,11 @@ final class Spolek_Portal_Renderer {
      */
     private static function render_purged_archives_panel(): string {
         if (!self::is_manager()) return '';
+
+        // 6.4.4 – auto-clean index (best-effort)
+        if (class_exists('Spolek_Tools')) {
+            Spolek_Tools::maybe_cleanup_archive_index();
+        }
 
         $html = '<h2>Archivní ZIP soubory (index)</h2>';
         $html .= '<div style="opacity:.8;margin:6px 0 10px 0;">'
@@ -781,7 +1019,7 @@ final class Spolek_Portal_Renderer {
         // ===== filtry =====
         $arch_q = isset($_GET['arch_q']) ? sanitize_text_field(wp_unslash((string)$_GET['arch_q'])) : '';
         $arch_state = isset($_GET['arch_state']) ? sanitize_key(wp_unslash((string)$_GET['arch_state'])) : 'all';
-        if (!in_array($arch_state, ['all','active','purged','missing'], true)) $arch_state = 'all';
+        if (!in_array($arch_state, ['all','active','purged','missing','hidden'], true)) $arch_state = 'all';
 
         $arch_from = isset($_GET['arch_from']) ? sanitize_text_field(wp_unslash((string)$_GET['arch_from'])) : '';
         $arch_to   = isset($_GET['arch_to'])   ? sanitize_text_field(wp_unslash((string)$_GET['arch_to']))   : '';
@@ -806,6 +1044,7 @@ final class Spolek_Portal_Renderer {
                 . '<option value="active"'.selected($arch_state,'active',false).'>V DB</option>'
                 . '<option value="purged"'.selected($arch_state,'purged',false).'>Po purge</option>'
                 . '<option value="missing"'.selected($arch_state,'missing',false).'>Chybí soubor</option>'
+                . '<option value="hidden"'.selected($arch_state,'hidden',false).'>Skryté</option>'
               . '</select></div>'
             . '<div><div style="font-size:12px;opacity:.75;">Od (YYYY-MM-DD)</div><input type="text" name="arch_from" value="'.esc_attr($arch_from).'" placeholder="2026-01-01" style="width:120px;"></div>'
             . '<div><div style="font-size:12px;opacity:.75;">Do (YYYY-MM-DD)</div><input type="text" name="arch_to" value="'.esc_attr($arch_to).'" placeholder="2026-12-31" style="width:120px;"></div>'
@@ -822,9 +1061,15 @@ final class Spolek_Portal_Renderer {
         }
 
         // Předpočty (pro souhrn)
-        $cnt_all = 0; $cnt_active = 0; $cnt_purged = 0; $cnt_missing = 0;
+        $cnt_all = 0; $cnt_active = 0; $cnt_purged = 0; $cnt_missing = 0; $cnt_hidden = 0;
         foreach ($items as $it) {
             $cnt_all++;
+            $is_hidden = (class_exists('Spolek_Archive') && method_exists('Spolek_Archive', 'is_hidden_item'))
+                ? Spolek_Archive::is_hidden_item((array)$it)
+                : (!empty($it['hidden']) || !empty($it['hidden_at']));
+            if ($is_hidden) {
+                $cnt_hidden++;
+            }
             $is_purged = !empty($it['purged_at']);
             if ($is_purged) $cnt_purged++; else $cnt_active++;
             $file = basename((string)($it['file'] ?? ''));
@@ -834,7 +1079,7 @@ final class Spolek_Portal_Renderer {
         }
 
         $html .= '<div style="opacity:.85;margin:6px 0 10px 0;">'
-            . 'Celkem: <strong>'.(int)$cnt_all.'</strong> | V DB: <strong>'.(int)$cnt_active.'</strong> | Po purge: <strong>'.(int)$cnt_purged.'</strong> | Chybí soubor: <strong>'.(int)$cnt_missing.'</strong>'
+            . 'Celkem: <strong>'.(int)$cnt_all.'</strong> | V DB: <strong>'.(int)$cnt_active.'</strong> | Po purge: <strong>'.(int)$cnt_purged.'</strong> | Chybí soubor: <strong>'.(int)$cnt_missing.'</strong> | Skryté: <strong>'.(int)$cnt_hidden.'</strong>'
             . '</div>';
 
         $html .= '<table style="width:100%;border-collapse:collapse;">'
@@ -857,6 +1102,13 @@ final class Spolek_Portal_Renderer {
             $archived_at  = (int)($it['archived_at'] ?? 0);
             $purged_at    = (int)($it['purged_at'] ?? 0);
             $is_purged    = $purged_at > 0;
+            $is_hidden    = (class_exists('Spolek_Archive') && method_exists('Spolek_Archive', 'is_hidden_item'))
+                ? Spolek_Archive::is_hidden_item((array)$it)
+                : (!empty($it['hidden']) || !empty($it['hidden_at']));
+
+            // default: skryté nezobrazujeme, pokud si je explicitně nevyfiltruješ
+            if ($arch_state === 'hidden' && !$is_hidden) continue;
+            if ($arch_state !== 'hidden' && $is_hidden) continue;
 
             if ($arch_q !== '') {
                 $hay = $title . ' ' . $file;

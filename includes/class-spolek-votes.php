@@ -89,6 +89,38 @@ final class Spolek_Votes {
         return $map;
     }
 
+    /**
+     * Bulk počty pro více hlasování v jednom dotazu.
+     * @param int[] $vote_post_ids
+     * @return array<int,array{ANO:int,NE:int,ZDRZEL:int}>
+     */
+    public static function get_counts_bulk(array $vote_post_ids): array {
+        global $wpdb;
+        $ids = array_values(array_unique(array_map('intval', (array)$vote_post_ids)));
+        $ids = array_values(array_filter($ids, fn($v) => $v > 0));
+        if (!$ids) return [];
+
+        $table = self::table_name();
+        $placeholders = implode(',', array_fill(0, count($ids), '%d'));
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $sql = "SELECT vote_post_id, choice, COUNT(*) as c FROM $table WHERE vote_post_id IN ($placeholders) GROUP BY vote_post_id, choice";
+        $rows = $wpdb->get_results($wpdb->prepare($sql, $ids), ARRAY_A);
+
+        $out = [];
+        foreach ($ids as $id) {
+            $out[(int)$id] = ['ANO'=>0,'NE'=>0,'ZDRZEL'=>0];
+        }
+        foreach ((array)$rows as $r) {
+            $vid = (int)($r['vote_post_id'] ?? 0);
+            $ch  = (string)($r['choice'] ?? '');
+            if ($vid && isset($out[$vid]) && isset($out[$vid][$ch])) {
+                $out[$vid][$ch] = (int)($r['c'] ?? 0);
+            }
+        }
+
+        return $out;
+    }
+
     /** Pro CSV export */
     public static function export_rows(int $vote_post_id): array {
         global $wpdb;

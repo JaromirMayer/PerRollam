@@ -66,6 +66,7 @@ final class Spolek_Audit_Events {
     public const CLOSE_SCAN_MANUAL     = 'close.scan.manual';
     public const PURGE_SCAN_MANUAL     = 'purge.scan.manual';
     public const ARCHIVE_STORAGE_TEST  = 'archive.storage_test';
+    public const ARCHIVE_INDEX_CLEANUP = 'archive.index.cleanup';
 
     // Self-heal (request-driven watchdog)
     public const SELF_HEAL_TICK      = 'self_heal.tick';
@@ -83,4 +84,10 @@ final class Spolek_Audit_Events {
     public const MAIL_MEMBER_SILENT       = 'mail.member.silent';
     public const MAIL_MEMBER_NO_EMAIL     = 'mail.member.no_email';
     public const MAIL_MEMBER_FAIL         = 'mail.member.fail';
+
+    // Tools / healthcheck
+    public const TOOLS_TEST_MAIL_OK   = 'tools.test_mail.ok';
+    public const TOOLS_TEST_MAIL_FAIL = 'tools.test_mail.fail';
+    public const TOOLS_TEST_PDF_OK    = 'tools.test_pdf.ok';
+    public const TOOLS_TEST_PDF_FAIL  = 'tools.test_pdf.fail';
 }

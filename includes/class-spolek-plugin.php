@@ -18,6 +18,7 @@ final class Spolek_Plugin {
         'includes/class-spolek-cron-status.php',
         'includes/class-spolek-vote-service.php',
         'includes/class-spolek-admin.php',
+        'includes/class-spolek-tools.php',
         'includes/class-spolek-audit-events.php',
         'includes/class-spolek-audit.php',
         'includes/class-spolek-mailer.php',
@@ -33,6 +34,7 @@ final class Spolek_Plugin {
         'includes/class-spolek-archive-controller.php',
         'includes/class-spolek-cron-controller.php',
         'includes/class-spolek-pdf-controller.php',
+        'includes/class-spolek-tools-controller.php',
         'includes/class-spolek-portal.php',
         'includes/class-spolek-pdf.php',
     ];
@@ -84,6 +86,10 @@ final class Spolek_Plugin {
         }
         if (class_exists('Spolek_PDF_Controller')) {
         (new Spolek_PDF_Controller())->register();
+        }
+
+        if (class_exists('Spolek_Tools_Controller')) {
+            (new Spolek_Tools_Controller())->register();
         }
 
         if (class_exists('Spolek_Cron')) {

@@ -9,6 +9,9 @@ if (!defined('ABSPATH')) exit;
  */
 final class Spolek_Vote_Service {
 
+    /** @var WP_User[]|null */
+    private static $members_cache = null;
+
     /** Vrátí veřejný token hlasování (bezpečný pro URL), nebo prázdný string. */
     public static function public_id(int $vote_post_id): string {
         return (string) get_post_meta($vote_post_id, Spolek_Config::META_PUBLIC_ID, true);
@@ -96,13 +99,19 @@ final class Spolek_Vote_Service {
      * @return WP_User[]
      */
     public static function get_members(): array {
+        if (self::$members_cache !== null) {
+            return self::$members_cache;
+        }
+
         $limit = (int) apply_filters('spolek_members_limit', 200);
         if ($limit <= 0) $limit = 200;
 
-        return (array) get_users([
+        self::$members_cache = (array) get_users([
             'role__in' => self::member_roles(),
             'number'   => $limit,
         ]);
+
+        return self::$members_cache;
     }
 
     /**
