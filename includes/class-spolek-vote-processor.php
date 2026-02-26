@@ -10,8 +10,185 @@ final class Spolek_Vote_Processor {
 
     /** Reminder 48/24. */
     public static function reminder(int $vote_post_id, string $type): void {
-        if (class_exists('Spolek_Mailer')) {
-            Spolek_Mailer::send_reminder((int)$vote_post_id, (string)$type);
+        $vote_post_id = (int)$vote_post_id;
+        $type = (string)$type;
+
+        if ($type !== 'reminder48' && $type !== 'reminder24') return;
+
+        $post = get_post($vote_post_id);
+        if (!$post || $post->post_type !== Spolek_Config::CPT) return;
+
+        if (!class_exists('Spolek_Mailer')) return;
+
+        // Vote-level idempotence: pokud jsme už batch úspěšně dokončili, nic nedělej.
+        $done_key = ($type === 'reminder48') ? Spolek_Config::META_REMINDER48_DONE_AT : Spolek_Config::META_REMINDER24_DONE_AT;
+        $done_at  = (string) get_post_meta($vote_post_id, $done_key, true);
+        if ($done_at !== '') {
+            if (class_exists('Spolek_Audit')) {
+                Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_REMINDER_SKIP_DONE, ['type' => $type, 'done_at' => $done_at]);
+            }
+            return;
+        }
+
+        $lock_token = self::acquire_reminder_lock($vote_post_id, $type, 300);
+        if (!$lock_token) {
+            // lock busy -> krátký retry
+            self::schedule_reminder_retry($vote_post_id, $type, 1, 'lock_busy');
+            return;
+        }
+
+        try {
+            if (class_exists('Spolek_Cron_Status')) {
+                Spolek_Cron_Status::touch(Spolek_Config::HOOK_REMINDER, true);
+            }
+
+            [$start_ts, $end_ts] = [
+                (int) get_post_meta($vote_post_id, Spolek_Config::META_START_TS, true),
+                (int) get_post_meta($vote_post_id, Spolek_Config::META_END_TS, true),
+            ];
+            if ($start_ts && $end_ts) {
+                $status = Spolek_Vote_Service::get_status($start_ts, $end_ts);
+                if ($status !== 'open') {
+                    // mimo okno -> už nemá smysl retry
+                    update_post_meta($vote_post_id, $done_key, (string) time());
+                    return;
+                }
+            }
+
+            if (class_exists('Spolek_Audit')) {
+                Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_REMINDER_START, ['type' => $type]);
+            }
+
+            $stats = (array) Spolek_Mailer::send_reminder($vote_post_id, $type);
+            $failed = (int)($stats['failed'] ?? 0);
+
+            if ($failed <= 0) {
+                update_post_meta($vote_post_id, $done_key, (string) time());
+                // cleanup
+                delete_post_meta($vote_post_id, ($type === 'reminder48') ? Spolek_Config::META_REMINDER48_ATTEMPTS : Spolek_Config::META_REMINDER24_ATTEMPTS);
+                delete_post_meta($vote_post_id, ($type === 'reminder48') ? Spolek_Config::META_REMINDER48_LAST_ERROR : Spolek_Config::META_REMINDER24_LAST_ERROR);
+                delete_post_meta($vote_post_id, ($type === 'reminder48') ? Spolek_Config::META_REMINDER48_NEXT_RETRY : Spolek_Config::META_REMINDER24_NEXT_RETRY);
+
+                if (class_exists('Spolek_Audit')) {
+                    Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_REMINDER_DONE, array_merge(['type' => $type], $stats));
+                }
+                return;
+            }
+
+            // failures -> retry (idempotence na úrovni člena drží mail log)
+            $attempt_key = ($type === 'reminder48') ? Spolek_Config::META_REMINDER48_ATTEMPTS : Spolek_Config::META_REMINDER24_ATTEMPTS;
+            $attempt = (int) get_post_meta($vote_post_id, $attempt_key, true);
+            $attempt++;
+            update_post_meta($vote_post_id, $attempt_key, (string)$attempt);
+
+            $err_key = ($type === 'reminder48') ? Spolek_Config::META_REMINDER48_LAST_ERROR : Spolek_Config::META_REMINDER24_LAST_ERROR;
+            update_post_meta($vote_post_id, $err_key, 'reminder failed: ' . $failed);
+
+            self::schedule_reminder_retry($vote_post_id, $type, $attempt, 'failed_' . $failed);
+
+        } catch (Throwable $e) {
+            $msg = substr((string)$e->getMessage(), 0, 300);
+            if (class_exists('Spolek_Cron_Status')) {
+                Spolek_Cron_Status::touch(Spolek_Config::HOOK_REMINDER, false, $msg);
+            }
+            $err_key = ($type === 'reminder48') ? Spolek_Config::META_REMINDER48_LAST_ERROR : Spolek_Config::META_REMINDER24_LAST_ERROR;
+            update_post_meta($vote_post_id, $err_key, $msg);
+            self::schedule_reminder_retry($vote_post_id, $type, 1, 'exception');
+        } finally {
+            self::release_reminder_lock($vote_post_id, $type, $lock_token);
+        }
+    }
+
+    // ======================================================================
+    // Reminder lock + retry
+    // ======================================================================
+
+    private static function reminder_lock_key(int $vote_post_id, string $type): string {
+        return 'spolek_vote_rem_lock_' . $vote_post_id . '_' . $type;
+    }
+
+    private static function acquire_reminder_lock(int $vote_post_id, string $type, int $ttl = 300): ?string {
+        $key = self::reminder_lock_key($vote_post_id, $type);
+
+        $token = function_exists('wp_generate_uuid4')
+            ? wp_generate_uuid4()
+            : (string) wp_rand(100000, 999999) . '-' . microtime(true);
+
+        $exp = time() + max(30, $ttl);
+        $value = $exp . '|' . $token;
+
+        if (add_option($key, $value, '', 'no')) {
+            return $token;
+        }
+
+        $existing = (string) get_option($key, '');
+        if ($existing !== '') {
+            $parts = explode('|', $existing, 2);
+            $existing_exp = (int)($parts[0] ?? 0);
+            if ($existing_exp > 0 && $existing_exp < time()) {
+                delete_option($key);
+                if (add_option($key, $value, '', 'no')) {
+                    return $token;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static function release_reminder_lock(int $vote_post_id, string $type, string $token): void {
+        $key = self::reminder_lock_key($vote_post_id, $type);
+        $existing = (string) get_option($key, '');
+        if ($existing === '') return;
+
+        $parts = explode('|', $existing, 2);
+        $existing_token = (string)($parts[1] ?? '');
+        if ($existing_token !== '' && hash_equals($existing_token, $token)) {
+            delete_option($key);
+        }
+    }
+
+    private static function reminder_retry_delay_seconds(int $attempt): int {
+        $delays = [300, 900, 1800, 3600]; // 5m,15m,30m,60m
+        $idx = max(1, $attempt) - 1;
+        if ($idx >= count($delays)) $idx = count($delays) - 1;
+        return (int)$delays[$idx];
+    }
+
+    private static function schedule_reminder_retry(int $vote_post_id, string $type, int $attempt, string $reason): void {
+        $vote_post_id = (int)$vote_post_id;
+        if ($attempt >= (int)Spolek_Config::REMINDER_MAX_ATTEMPTS) {
+            if (class_exists('Spolek_Audit')) {
+                Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_REMINDER_RETRY_GIVE_UP, ['type' => $type, 'attempt' => $attempt, 'reason' => $reason]);
+            }
+            // už dál nespouštíme – aby se to netočilo
+            $done_key = ($type === 'reminder48') ? Spolek_Config::META_REMINDER48_DONE_AT : Spolek_Config::META_REMINDER24_DONE_AT;
+            update_post_meta($vote_post_id, $done_key, (string) time());
+            return;
+        }
+
+        $delay  = self::reminder_retry_delay_seconds($attempt);
+        $jitter = (int) wp_rand(0, 30);
+        $when   = time() + $delay + $jitter;
+
+        // pokud už je naplánováno dřív, neplánuj druhé
+        $next = wp_next_scheduled(Spolek_Config::HOOK_REMINDER, [$vote_post_id, $type]);
+        if ($next && $next <= ($when + 10)) {
+            return;
+        }
+
+        wp_schedule_single_event($when, Spolek_Config::HOOK_REMINDER, [$vote_post_id, $type]);
+        $next_key = ($type === 'reminder48') ? Spolek_Config::META_REMINDER48_NEXT_RETRY : Spolek_Config::META_REMINDER24_NEXT_RETRY;
+        update_post_meta($vote_post_id, $next_key, (string)$when);
+
+        if (class_exists('Spolek_Audit')) {
+            Spolek_Audit::log($vote_post_id, null, Spolek_Audit_Events::CRON_REMINDER_RETRY_SCHEDULED, [
+                'type'   => $type,
+                'attempt'=> $attempt,
+                'when'   => $when,
+                'delay'  => $delay,
+                'reason' => $reason,
+            ]);
         }
     }
 

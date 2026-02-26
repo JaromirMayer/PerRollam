@@ -31,6 +31,13 @@ final class Spolek_Audit_Events {
     public const CRON_CLOSE_RETRY_GIVE_UP    = 'cron.close.retry.give_up';
     public const CRON_CLOSE_SKIP_MAX         = 'cron.close.skip_max';
 
+    // Cron reminder
+    public const CRON_REMINDER_START          = 'cron.reminder.start';
+    public const CRON_REMINDER_DONE           = 'cron.reminder.done';
+    public const CRON_REMINDER_SKIP_DONE      = 'cron.reminder.skip_done';
+    public const CRON_REMINDER_RETRY_SCHEDULED = 'cron.reminder.retry.scheduled';
+    public const CRON_REMINDER_RETRY_GIVE_UP   = 'cron.reminder.retry.give_up';
+
     // PDF
     public const PDF_GENERATED         = 'pdf.generated';
     public const PDF_GENERATION_FAILED = 'pdf.generation_failed';

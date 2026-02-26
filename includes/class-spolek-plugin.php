@@ -15,6 +15,7 @@ final class Spolek_Plugin {
      */
     private const DEPENDENCIES = [
         'includes/class-spolek-config.php',
+        'includes/class-spolek-cron-status.php',
         'includes/class-spolek-vote-service.php',
         'includes/class-spolek-admin.php',
         'includes/class-spolek-audit-events.php',
@@ -30,6 +31,7 @@ final class Spolek_Plugin {
         'includes/class-spolek-legacy.php',
         'includes/class-spolek-votes-controller.php',
         'includes/class-spolek-archive-controller.php',
+        'includes/class-spolek-cron-controller.php',
         'includes/class-spolek-pdf-controller.php',
         'includes/class-spolek-portal.php',
         'includes/class-spolek-pdf.php',
@@ -76,6 +78,9 @@ final class Spolek_Plugin {
         }
         if (class_exists('Spolek_Archive_Controller')) {
         (new Spolek_Archive_Controller())->register();
+        }
+        if (class_exists('Spolek_Cron_Controller')) {
+        (new Spolek_Cron_Controller())->register();
         }
         if (class_exists('Spolek_PDF_Controller')) {
         (new Spolek_PDF_Controller())->register();

@@ -65,6 +65,10 @@ final class Spolek_Portal_Renderer {
             // 3) Archivní ZIP soubory po smazání z DB
             $out .= self::render_section_sep();
             $out .= self::render_purged_archives_panel();
+
+            // 6.1 – Cron status (diagnostika)
+            $out .= self::render_section_sep();
+            $out .= self::render_cron_status_panel();
         } else {
             // Uzavřená hlasování (pro členy – jen pro čtení)
             $out .= self::render_section_sep();
@@ -105,6 +109,256 @@ final class Spolek_Portal_Renderer {
             'spolek_vote','created','voted','err','export','archived','purged','purge_scan','purge_scan_purged',
             'notice','storage_test','storage_test_ok','storage_test_err','storage_test_storage','storage_test_dir','storage_test_err'
         ], home_url(add_query_arg([])));
+    }
+
+    /** 6.1.4 – Cron status (jen pro správce). */
+    private static function render_cron_status_panel(): string {
+        if (!self::is_manager()) return '';
+
+        $now = time();
+        $tz = wp_timezone();
+
+        $hooks = [
+            Spolek_Config::HOOK_CLOSE_SCAN,
+            Spolek_Config::HOOK_REMINDER_SCAN,
+            Spolek_Config::HOOK_ARCHIVE_SCAN,
+            Spolek_Config::HOOK_PURGE_SCAN,
+            Spolek_Config::HOOK_SELF_HEAL,
+        ];
+
+        $disable_wp_cron = (defined('DISABLE_WP_CRON') && DISABLE_WP_CRON);
+
+        // poslední známý běh (jakýkoli hook)
+        $last_any = 0;
+        if (class_exists('Spolek_Cron_Status')) {
+            foreach ($hooks as $h) {
+                $st = Spolek_Cron_Status::get($h);
+                $last_any = max($last_any, (int)($st['last'] ?? 0));
+            }
+        }
+
+        // počty „co čeká“
+        $overdue_closures = self::count_overdue_closures();
+        $missing_archives = self::count_missing_archives();
+        $purge_candidates = self::count_purge_candidates();
+        $reminder_candidates = self::count_reminder_candidates();
+
+        $action = esc_url(admin_url('admin-post.php'));
+
+        $html  = '<h2>Cron status</h2>';
+        $html .= '<div style="opacity:.85;">Serverový čas: <strong>'
+              . esc_html(wp_date('j.n.Y H:i:s', $now, $tz))
+              . '</strong></div>';
+
+        if ($disable_wp_cron) {
+            $html .= '<p style="margin:10px 0;padding:10px;border:1px solid #d63638;background:#fff5f5;">'
+                  . '<strong>DISABLE_WP_CRON = true</strong> → WordPress nebude spouštět cron přes návštěvy. '
+                  . 'Doporučené je nastavit <em>server cron</em> na volání wp-cron.php.'
+                  . '</p>';
+        }
+
+        if ($last_any > 0 && ($now - $last_any) > (2 * HOUR_IN_SECONDS)) {
+            $html .= '<p style="margin:10px 0;padding:10px;border:1px solid #dba617;background:#fff8e5;">'
+                  . 'Poslední zaznamenaný běh cron hooků je starší než 2 hodiny: <strong>'
+                  . esc_html(wp_date('j.n.Y H:i', $last_any, $tz))
+                  . '</strong>. Pokud to není očekávané, nastavte server cron (viz níže) nebo ověřte, že hosting WP-Cron neblokuje.'
+                  . '</p>';
+        }
+
+        $html .= '<ul style="margin:10px 0 14px 18px;">'
+              . '<li><strong>Čeká na uzávěrku:</strong> ' . (int)$overdue_closures . '</li>'
+              . '<li><strong>Chybí archiv ZIP:</strong> ' . (int)$missing_archives . '</li>'
+              . '<li><strong>Kandidáti na purge (30 dní):</strong> ' . (int)$purge_candidates . '</li>'
+              . '<li><strong>Kandidáti na reminder (do 48h):</strong> ' . (int)$reminder_candidates . '</li>'
+              . '</ul>';
+
+        // Tabulka hooků
+        $html .= '<table style="width:100%;border-collapse:collapse;">'
+              . '<thead><tr>'
+              . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Hook</th>'
+              . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Schedule</th>'
+              . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Next</th>'
+              . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Last</th>'
+              . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">State</th>'
+              . '</tr></thead><tbody>';
+
+        foreach ($hooks as $h) {
+            $sched = function_exists('wp_get_schedule') ? (string) wp_get_schedule($h) : '';
+            $next  = (int) wp_next_scheduled($h);
+            $st = class_exists('Spolek_Cron_Status') ? Spolek_Cron_Status::get($h) : ['last'=>0,'last_ok'=>0,'last_error'=>0,'error_msg'=>''];
+
+            $next_s = $next ? wp_date('j.n.Y H:i', $next, $tz) : '–';
+            $last_s = !empty($st['last']) ? wp_date('j.n.Y H:i', (int)$st['last'], $tz) : '–';
+            $state  = 'OK';
+            if (!empty($st['last_error']) && (int)$st['last_error'] >= (int)($st['last_ok'] ?? 0)) {
+                $state = 'ERROR';
+                if (!empty($st['error_msg'])) {
+                    $state .= ': ' . esc_html((string)$st['error_msg']);
+                }
+            }
+
+            $html .= '<tr>'
+                  . '<td style="border-bottom:1px solid #eee;padding:6px;"><code>' . esc_html($h) . '</code></td>'
+                  . '<td style="border-bottom:1px solid #eee;padding:6px;">' . esc_html($sched ?: '–') . '</td>'
+                  . '<td style="border-bottom:1px solid #eee;padding:6px;">' . esc_html($next_s) . '</td>'
+                  . '<td style="border-bottom:1px solid #eee;padding:6px;">' . esc_html($last_s) . '</td>'
+                  . '<td style="border-bottom:1px solid #eee;padding:6px;">' . $state . '</td>'
+                  . '</tr>';
+        }
+
+        $html .= '</tbody></table>';
+
+        // Run now tlačítka
+        $html .= '<h3 style="margin-top:14px;">Run now</h3>';
+        $html .= '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">';
+
+        $html .= '<form method="post" action="'.$action.'" style="margin:0;">'
+            . '<input type="hidden" name="action" value="spolek_run_self_heal">'
+            . wp_nonce_field('spolek_run_self_heal', '_nonce', true, false)
+            . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
+            . '<button type="submit">Self-heal</button>'
+            . '</form>';
+
+        $html .= '<form method="post" action="'.$action.'" style="margin:0;">'
+            . '<input type="hidden" name="action" value="spolek_run_archive_scan">'
+            . wp_nonce_field('spolek_run_archive_scan', '_nonce', true, false)
+            . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
+            . '<button type="submit">Archive scan</button>'
+            . '</form>';
+
+        $html .= '<form method="post" action="'.$action.'" style="margin:0;">'
+            . '<input type="hidden" name="action" value="spolek_run_reminder_scan">'
+            . wp_nonce_field('spolek_run_reminder_scan', '_nonce', true, false)
+            . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
+            . '<button type="submit">Reminder scan</button>'
+            . '</form>';
+
+        $html .= '<form method="post" action="'.$action.'" style="margin:0;">'
+            . '<input type="hidden" name="action" value="spolek_spawn_cron">'
+            . wp_nonce_field('spolek_spawn_cron', '_nonce', true, false)
+            . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
+            . '<button type="submit">spawn_cron()</button>'
+            . '</form>';
+
+        $html .= '</div>';
+
+        // Doporučený server cron
+        $wp_cron_url = esc_url(site_url('/wp-cron.php?doing_wp_cron'));
+        $html .= '<h3 style="margin-top:14px;">Doporučené nastavení server cron</h3>'
+              . '<div style="opacity:.85;margin-bottom:6px;">Spusťte každých 5 minut (příklad):</div>'
+              . '<pre style="background:#f6f7f7;border:1px solid #ddd;padding:10px;border-radius:8px;overflow:auto;">'
+              . '*/5 * * * * curl -fsS "' . $wp_cron_url . '" > /dev/null 2>&1'
+              . '</pre>';
+
+        return $html;
+    }
+
+    private static function count_overdue_closures(): int {
+        $now = time();
+        $q = new WP_Query([
+            'post_type'      => Spolek_Config::CPT,
+            'post_status'    => 'publish',
+            'posts_per_page' => 1,
+            'fields'         => 'ids',
+            'meta_query'     => [
+                [
+                    'key'     => Spolek_Config::META_END_TS,
+                    'value'   => $now,
+                    'compare' => '<',
+                    'type'    => 'NUMERIC',
+                ],
+                [
+                    'key'     => Spolek_Config::META_CLOSE_PROCESSED_AT,
+                    'compare' => 'NOT EXISTS',
+                ],
+            ],
+        ]);
+        return (int)($q->found_posts ?? 0);
+    }
+
+    private static function count_missing_archives(): int {
+        $now = time();
+        $q = new WP_Query([
+            'post_type'      => Spolek_Config::CPT,
+            'post_status'    => 'publish',
+            'posts_per_page' => 1,
+            'fields'         => 'ids',
+            'meta_query'     => [
+                [
+                    'key'     => Spolek_Config::META_END_TS,
+                    'value'   => $now,
+                    'compare' => '<',
+                    'type'    => 'NUMERIC',
+                ],
+                [
+                    'key'     => Spolek_Config::META_CLOSE_PROCESSED_AT,
+                    'compare' => 'EXISTS',
+                ],
+                [
+                    'key'     => Spolek_Config::META_ARCHIVE_FILE,
+                    'compare' => 'NOT EXISTS',
+                ],
+            ],
+        ]);
+        return (int)($q->found_posts ?? 0);
+    }
+
+    private static function count_purge_candidates(): int {
+        $threshold = time() - (30 * DAY_IN_SECONDS);
+        $q = new WP_Query([
+            'post_type'      => Spolek_Config::CPT,
+            'post_status'    => 'publish',
+            'posts_per_page' => 1,
+            'fields'         => 'ids',
+            'meta_query'     => [
+                [
+                    'key'     => Spolek_Config::META_END_TS,
+                    'value'   => $threshold,
+                    'compare' => '<',
+                    'type'    => 'NUMERIC',
+                ],
+                [
+                    'key'     => Spolek_Config::META_CLOSE_PROCESSED_AT,
+                    'compare' => 'EXISTS',
+                ],
+                [
+                    'key'     => Spolek_Config::META_ARCHIVE_FILE,
+                    'compare' => 'EXISTS',
+                ],
+            ],
+        ]);
+        return (int)($q->found_posts ?? 0);
+    }
+
+    private static function count_reminder_candidates(): int {
+        $now = time();
+        $q = new WP_Query([
+            'post_type'      => Spolek_Config::CPT,
+            'post_status'    => 'publish',
+            'posts_per_page' => 1,
+            'fields'         => 'ids',
+            'meta_query'     => [
+                [
+                    'key'     => Spolek_Config::META_START_TS,
+                    'value'   => $now,
+                    'compare' => '<',
+                    'type'    => 'NUMERIC',
+                ],
+                [
+                    'key'     => Spolek_Config::META_END_TS,
+                    'value'   => $now,
+                    'compare' => '>',
+                    'type'    => 'NUMERIC',
+                ],
+                [
+                    'key'     => Spolek_Config::META_END_TS,
+                    'value'   => $now + (48 * HOUR_IN_SECONDS),
+                    'compare' => '<=',
+                    'type'    => 'NUMERIC',
+                ],
+            ],
+        ]);
+        return (int)($q->found_posts ?? 0);
     }
 
     private static function is_manager(): bool {

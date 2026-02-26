@@ -59,12 +59,26 @@ final class Spolek_Self_Heal {
      * @param string $source request|cron
      */
     public static function run(string $source = 'cron'): void {
+        if (class_exists('Spolek_Cron_Status')) {
+            Spolek_Cron_Status::touch(Spolek_Config::HOOK_SELF_HEAL, true);
+        }
         // 1) zajistit recurring eventy
         self::ensure_recurring_events();
 
         // 2) dohánění uzávěrek (největší pain)
         $inline = ($source === 'cron') || current_user_can(Spolek_Config::CAP_MANAGE);
         $stats = self::heal_overdue_closures(self::CLOSE_LIMIT, self::SILENT_AFTER_DAYS, $inline);
+
+        // 3) (manažer/cron) dohánění reminderů – jen pokud jsme v inline režimu
+        if ($inline && class_exists('Spolek_Cron') && method_exists('Spolek_Cron', 'reminder_scan')) {
+            try {
+                Spolek_Cron::reminder_scan(3);
+            } catch (Throwable $e) {
+                if (class_exists('Spolek_Cron_Status')) {
+                    Spolek_Cron_Status::touch(Spolek_Config::HOOK_REMINDER_SCAN, false, $e->getMessage());
+                }
+            }
+        }
 
         if (class_exists('Spolek_Audit')) {
             Spolek_Audit::log(null, get_current_user_id() ?: null, Spolek_Audit_Events::SELF_HEAL_TICK, [
@@ -94,6 +108,11 @@ final class Spolek_Self_Heal {
         // self-heal cron (10 min)
         if (!wp_next_scheduled(Spolek_Config::HOOK_SELF_HEAL)) {
             wp_schedule_event(time() + 180, Spolek_Config::CRON_10MIN, Spolek_Config::HOOK_SELF_HEAL);
+        }
+
+        // reminder_scan (10 min)
+        if (!wp_next_scheduled(Spolek_Config::HOOK_REMINDER_SCAN)) {
+            wp_schedule_event(time() + 210, Spolek_Config::CRON_10MIN, Spolek_Config::HOOK_REMINDER_SCAN);
         }
     }
 

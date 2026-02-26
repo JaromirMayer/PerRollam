@@ -19,6 +19,7 @@ final class Spolek_Config {
     public const HOOK_PURGE_SCAN   = 'spolek_purge_scan';
     public const HOOK_CLOSE_SCAN   = 'spolek_close_scan';
     public const HOOK_SELF_HEAL    = 'spolek_self_heal';
+    public const HOOK_REMINDER_SCAN = 'spolek_reminder_scan';
 
     // Cron interval slug (registered via cron_schedules)
     public const CRON_10MIN        = 'spolek_10min';
@@ -52,6 +53,17 @@ final class Spolek_Config {
     public const META_CLOSE_GAVE_UP_AT   = '_spolek_close_gave_up_at';
 
     public const CLOSE_MAX_ATTEMPTS      = 5;
+
+    // Reminder meta (vote-level) – pro retry/diagnostiku
+    public const META_REMINDER48_DONE_AT   = '_spolek_reminder48_done_at';
+    public const META_REMINDER24_DONE_AT   = '_spolek_reminder24_done_at';
+    public const META_REMINDER48_ATTEMPTS  = '_spolek_reminder48_attempts';
+    public const META_REMINDER24_ATTEMPTS  = '_spolek_reminder24_attempts';
+    public const META_REMINDER48_LAST_ERROR = '_spolek_reminder48_last_error';
+    public const META_REMINDER24_LAST_ERROR = '_spolek_reminder24_last_error';
+    public const META_REMINDER48_NEXT_RETRY = '_spolek_reminder48_next_retry_at';
+    public const META_REMINDER24_NEXT_RETRY = '_spolek_reminder24_next_retry_at';
+    public const REMINDER_MAX_ATTEMPTS     = 5;
 
     // Archiv meta + storage
     public const META_ARCHIVE_FILE       = '_spolek_archive_file';

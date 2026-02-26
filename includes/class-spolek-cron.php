@@ -9,6 +9,7 @@ final class Spolek_Cron {
     public const HOOK_PURGE_SCAN   = Spolek_Config::HOOK_PURGE_SCAN;
     public const HOOK_CLOSE_SCAN   = Spolek_Config::HOOK_CLOSE_SCAN;
     public const HOOK_SELF_HEAL    = Spolek_Config::HOOK_SELF_HEAL;
+    public const HOOK_REMINDER_SCAN = Spolek_Config::HOOK_REMINDER_SCAN;
 
     /** Přidá vlastní intervaly pro WP-Cron. */
     public static function add_schedules(array $schedules): array {
@@ -53,9 +54,21 @@ final class Spolek_Cron {
             }
         }
 
+        // 6.1 – dohánění reminderů (každých ~10 min)
+        add_action(self::HOOK_REMINDER_SCAN, [__CLASS__, 'reminder_scan']);
+        $next_rem_scan = wp_next_scheduled(self::HOOK_REMINDER_SCAN);
+        if (!$next_rem_scan) {
+            wp_schedule_event(time() + 510, Spolek_Config::CRON_10MIN, self::HOOK_REMINDER_SCAN);
+        } else {
+            $sched = function_exists('wp_get_schedule') ? (string) wp_get_schedule(self::HOOK_REMINDER_SCAN) : '';
+            if ($sched !== '' && $sched !== Spolek_Config::CRON_10MIN) {
+                wp_clear_scheduled_hook(self::HOOK_REMINDER_SCAN);
+                wp_schedule_event(time() + 510, Spolek_Config::CRON_10MIN, self::HOOK_REMINDER_SCAN);
+            }
+        }
+
         // 5.1 – self-heal (redundance vedle request-driven watchdogu)
         if (class_exists('Spolek_Self_Heal')) {
-            add_action(self::HOOK_SELF_HEAL, ['Spolek_Self_Heal', 'run']);
             $next_heal = wp_next_scheduled(self::HOOK_SELF_HEAL);
             if (!$next_heal) {
                 wp_schedule_event(time() + 480, Spolek_Config::CRON_10MIN, self::HOOK_SELF_HEAL);
@@ -114,6 +127,9 @@ final class Spolek_Cron {
      * Běží 1× za hodinu, ale zpracuje max 10 položek (aby to nebylo těžké).
      */
     public static function archive_scan(): void {
+        if (class_exists('Spolek_Cron_Status')) {
+            Spolek_Cron_Status::touch(self::HOOK_ARCHIVE_SCAN, true);
+        }
         if (!class_exists('Spolek_Archive') || !class_exists('Spolek_Hlasovani_MVP')) return;
 
         $now = time();
@@ -171,6 +187,9 @@ final class Spolek_Cron {
      * @return int Kolik hlasování bylo smazáno z DB (OK).
      */
     public static function purge_scan(): int {
+        if (class_exists('Spolek_Cron_Status')) {
+            Spolek_Cron_Status::touch(self::HOOK_PURGE_SCAN, true);
+        }
         if (!class_exists('Spolek_Archive') || !class_exists('Spolek_Hlasovani_MVP')) return 0;
 
         $threshold = time() - (30 * DAY_IN_SECONDS);
@@ -232,6 +251,9 @@ final class Spolek_Cron {
      * @return array{total:int,silent:int,normal:int,errors:int,ids:array<int>}
      */
     public static function close_scan(int $limit = 10, int $silent_after_days = 7): array {
+        if (class_exists('Spolek_Cron_Status')) {
+            Spolek_Cron_Status::touch(self::HOOK_CLOSE_SCAN, true);
+        }
         if (!class_exists('Spolek_Hlasovani_MVP')) {
             return ['total'=>0,'silent'=>0,'normal'=>0,'errors'=>0,'ids'=>[]];
         }
@@ -423,5 +445,82 @@ final class Spolek_Cron {
     public static function cron_reminder(int $vote_post_id, string $type): void {
     Spolek_Vote_Processor::reminder($vote_post_id, $type);
 }
+
+    /**
+     * 6.1 – Cron scan: dohání reminder48/reminder24 pro otevřená hlasování,
+     * pokud byl WP-Cron pozadu nebo událost neproběhla.
+     *
+     * Běží každých ~10 min, zpracuje max 10 hlasování.
+     *
+     * @return array{votes:int,total:int,ids:array<int>}
+     */
+    public static function reminder_scan(int $limit = 10): array {
+        if (class_exists('Spolek_Cron_Status')) {
+            Spolek_Cron_Status::touch(self::HOOK_REMINDER_SCAN, true);
+        }
+
+        if (!class_exists('Spolek_Vote_Processor') || !class_exists('Spolek_Hlasovani_MVP')) {
+            return ['votes' => 0, 'total' => 0, 'ids' => []];
+        }
+
+        $now = time();
+        $limit = max(1, (int)$limit);
+
+        $q = new WP_Query([
+            'post_type'      => Spolek_Config::CPT,
+            'post_status'    => 'publish',
+            'posts_per_page' => $limit,
+            'orderby'        => 'meta_value_num',
+            'meta_key'       => Spolek_Config::META_END_TS,
+            'order'          => 'ASC',
+            'meta_query'     => [
+                [
+                    'key'     => Spolek_Config::META_START_TS,
+                    'value'   => $now,
+                    'compare' => '<',
+                    'type'    => 'NUMERIC',
+                ],
+                [
+                    'key'     => Spolek_Config::META_END_TS,
+                    'value'   => $now,
+                    'compare' => '>',
+                    'type'    => 'NUMERIC',
+                ],
+                // končí do 48 hodin
+                [
+                    'key'     => Spolek_Config::META_END_TS,
+                    'value'   => $now + (48 * HOUR_IN_SECONDS),
+                    'compare' => '<=',
+                    'type'    => 'NUMERIC',
+                ],
+            ],
+        ]);
+
+        if (!$q->have_posts()) {
+            return ['votes' => 0, 'total' => 0, 'ids' => []];
+        }
+
+        $ids = wp_list_pluck($q->posts, 'ID');
+        wp_reset_postdata();
+
+        $stats = ['votes' => 0, 'total' => 0, 'ids' => []];
+
+        foreach ($ids as $id) {
+            $id = (int)$id;
+            $end_ts = (int) get_post_meta($id, Spolek_Config::META_END_TS, true);
+            if ($end_ts <= 0) continue;
+
+            $stats['votes']++;
+            $stats['ids'][] = $id;
+
+            // 24h okno má prioritu; 48h posíláme jen pokud ještě nejsme v posledních 24h.
+            $type = ($now >= ($end_ts - 24 * HOUR_IN_SECONDS)) ? 'reminder24' : 'reminder48';
+
+            Spolek_Vote_Processor::reminder($id, $type);
+            $stats['total']++;
+        }
+
+        return $stats;
+    }
 
 }
