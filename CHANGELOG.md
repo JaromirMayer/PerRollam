@@ -1,5 +1,8 @@
 # Changelog – Spolek: Hlasování per rollam
 
+## 0.6.6 (2026-02-26)
+- Fix: Member PDF link – pro správce povolen download i když je link podepsaný pro jiného uživatele (praktické pro testování). Zároveň se loguje audit event při neplatném/bypass linku.
+
 ## 0.6.5 (2026-02-26)
 - Fix: PDF odkaz v e-mailu (HTML režim) – odkazy jsou klikatelné a parametry se nerozbíjí ("&amp;" / "< >").
 
