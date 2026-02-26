@@ -115,7 +115,9 @@ final class Spolek_Portal_Renderer {
         // aktuální URL stránky bez query
         return remove_query_arg([
             'v','spolek_vote','created','voted','err','export','archived','purged','purge_scan','purge_scan_purged',
-            'notice','storage_test','storage_test_ok','storage_test_err','storage_test_storage','storage_test_dir','storage_test_err'
+            'notice','storage_test','storage_test_ok','storage_test_err','storage_test_storage','storage_test_dir','storage_test_err',
+            // filtry seznamu archivů
+            'arch_q','arch_state','arch_from','arch_to','arch_verify'
         ], home_url(add_query_arg([])));
     }
 
@@ -184,7 +186,7 @@ final class Spolek_Portal_Renderer {
         $html .= '<ul style="margin:10px 0 14px 18px;">'
               . '<li><strong>Čeká na uzávěrku:</strong> ' . (int)$overdue_closures . '</li>'
               . '<li><strong>Chybí archiv ZIP:</strong> ' . (int)$missing_archives . '</li>'
-              . '<li><strong>Kandidáti na purge (30 dní):</strong> ' . (int)$purge_candidates . '</li>'
+              . '<li><strong>Kandidáti na purge (' . (int)Spolek_Config::PURGE_RETENTION_DAYS . ' dní):</strong> ' . (int)$purge_candidates . '</li>'
               . '<li><strong>Kandidáti na reminder (do 48h):</strong> ' . (int)$reminder_candidates . '</li>'
               . '</ul>';
 
@@ -320,7 +322,7 @@ final class Spolek_Portal_Renderer {
     }
 
     private static function count_purge_candidates(): int {
-        $threshold = time() - (30 * DAY_IN_SECONDS);
+        $threshold = time() - ((int) Spolek_Config::PURGE_RETENTION_DAYS * DAY_IN_SECONDS);
         $q = new WP_Query([
             'post_type'      => Spolek_Config::CPT,
             'post_status'    => 'publish',
@@ -551,7 +553,7 @@ final class Spolek_Portal_Renderer {
             . wp_nonce_field('spolek_run_close_scan', '_nonce', true, false)
             . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
             . '<button type="submit">Dohnat uzávěrky (starší hlasování)</button>'
-            . '<div style="margin-top:6px;opacity:.75;font-size:12px;">Zpracuje max 10 ukončených hlasování, která stále čekají na cron. Hlasování uzavřená před více než 7 dny dožene v tichém režimu (bez rozesílky e-mailů), ale vytvoří výsledek, PDF a archiv ZIP.</div>'
+            . '<div style="margin-top:6px;opacity:.75;font-size:12px;">Zpracuje max ' . (int)Spolek_Config::CLOSE_SCAN_LIMIT . ' ukončených hlasování, která stále čekají na cron. Hlasování uzavřená před více než ' . (int)Spolek_Config::SILENT_AFTER_DAYS . ' dny dožene v tichém režimu (bez rozesílky e-mailů), ale vytvoří výsledek, PDF a archiv ZIP.</div>'
             . '</form>';
 
         if (!class_exists('Spolek_Archive')) {
@@ -678,13 +680,20 @@ final class Spolek_Portal_Renderer {
         return $html;
     }
 
-    /** 4.2 – Sekce 3: Archivní ZIP soubory, po smazání z DB (jen pro správce). */
+    /**
+     * 6.3.2 – Archivní ZIP soubory (index)
+     * Cíl: seznam archivů (včetně těch po purge), filtry, stažení a validace existence.
+     */
     private static function render_purged_archives_panel(): string {
         if (!self::is_manager()) return '';
 
-        $html = '<h2>Archivní ZIP soubory, po smazání z DB</h2>';
+        $html = '<h2>Archivní ZIP soubory (index)</h2>';
+        $html .= '<div style="opacity:.8;margin:6px 0 10px 0;">'
+            . 'Pravidla: <strong>Silent režim</strong> při dohánění uzávěrek po ' . (int)Spolek_Config::SILENT_AFTER_DAYS . ' dnech, '
+            . '<strong>retence DB</strong> ' . (int)Spolek_Config::PURGE_RETENTION_DAYS . ' dní (pak lze bezpečně smazat z DB, ZIP zůstává uložen).'
+            . '</div>';
 
-        // Diagnostika úložiště archivů (4.4.1)
+        // Diagnostika úložiště archivů
         if (class_exists('Spolek_Archive') && method_exists('Spolek_Archive', 'storage_status')) {
             $st = Spolek_Archive::storage_status();
 
@@ -744,7 +753,7 @@ final class Spolek_Portal_Renderer {
             $html .= '</div>';
         }
 
-        // Ruční spuštění purge scanu (4.3)
+        // Ruční spuštění purge scanu
         $purged_n = isset($_GET['purge_scan_purged']) ? (int)$_GET['purge_scan_purged'] : null;
         if (!empty($_GET['purge_scan'])) {
             if ($purged_n !== null) {
@@ -759,8 +768,8 @@ final class Spolek_Portal_Renderer {
             . '<input type="hidden" name="action" value="spolek_run_purge_scan">'
             . wp_nonce_field('spolek_run_purge_scan', '_nonce', true, false)
             . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
-            . '<button type="submit">Spustit automatické mazání (30 dní)</button>'
-            . '<div style="margin-top:6px;opacity:.75;font-size:12px;">Smaže max 10 hlasování, která jsou uzavřená déle než 30 dní a mají archivní ZIP (ověří SHA256). Maže i audit.</div>'
+            . '<button type="submit">Spustit automatické mazání (' . (int)Spolek_Config::PURGE_RETENTION_DAYS . ' dní)</button>'
+            . '<div style="margin-top:6px;opacity:.75;font-size:12px;">Smaže max ' . (int)Spolek_Config::PURGE_SCAN_LIMIT . ' hlasování, která jsou uzavřená déle než ' . (int)Spolek_Config::PURGE_RETENTION_DAYS . ' dní a mají archivní ZIP (ověří SHA256). Maže i audit.</div>'
             . '</form>';
 
         if (!class_exists('Spolek_Archive')) {
@@ -769,38 +778,181 @@ final class Spolek_Portal_Renderer {
 
         Spolek_Archive::ensure_storage();
 
-        $items = Spolek_Archive::list_archives();
-        $purged = array_filter($items, static function($it){ return !empty($it['purged_at']); });
+        // ===== filtry =====
+        $arch_q = isset($_GET['arch_q']) ? sanitize_text_field(wp_unslash((string)$_GET['arch_q'])) : '';
+        $arch_state = isset($_GET['arch_state']) ? sanitize_key(wp_unslash((string)$_GET['arch_state'])) : 'all';
+        if (!in_array($arch_state, ['all','active','purged','missing'], true)) $arch_state = 'all';
 
-        if (!$purged) {
-            $html .= '<p style="opacity:.8;">Zatím žádné.</p>';
+        $arch_from = isset($_GET['arch_from']) ? sanitize_text_field(wp_unslash((string)$_GET['arch_from'])) : '';
+        $arch_to   = isset($_GET['arch_to'])   ? sanitize_text_field(wp_unslash((string)$_GET['arch_to']))   : '';
+        $arch_verify = !empty($_GET['arch_verify']);
+
+        $from_ts = 0;
+        $to_ts = 0;
+        if ($arch_from !== '') {
+            $t = strtotime($arch_from . ' 00:00:00');
+            if ($t !== false) $from_ts = (int)$t;
+        }
+        if ($arch_to !== '') {
+            $t = strtotime($arch_to . ' 23:59:59');
+            if ($t !== false) $to_ts = (int)$t;
+        }
+
+        // Filter form (GET)
+        $html .= '<form method="get" style="display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:12px 0 10px 0;">'
+            . '<div><div style="font-size:12px;opacity:.75;">Hledat</div><input type="text" name="arch_q" value="'.esc_attr($arch_q).'" placeholder="název / soubor" style="min-width:220px;"></div>'
+            . '<div><div style="font-size:12px;opacity:.75;">Stav</div><select name="arch_state">'
+                . '<option value="all"'.selected($arch_state,'all',false).'>Vše</option>'
+                . '<option value="active"'.selected($arch_state,'active',false).'>V DB</option>'
+                . '<option value="purged"'.selected($arch_state,'purged',false).'>Po purge</option>'
+                . '<option value="missing"'.selected($arch_state,'missing',false).'>Chybí soubor</option>'
+              . '</select></div>'
+            . '<div><div style="font-size:12px;opacity:.75;">Od (YYYY-MM-DD)</div><input type="text" name="arch_from" value="'.esc_attr($arch_from).'" placeholder="2026-01-01" style="width:120px;"></div>'
+            . '<div><div style="font-size:12px;opacity:.75;">Do (YYYY-MM-DD)</div><input type="text" name="arch_to" value="'.esc_attr($arch_to).'" placeholder="2026-12-31" style="width:120px;"></div>'
+            . '<label style="display:flex;gap:6px;align-items:center;margin-bottom:2px;"><input type="checkbox" name="arch_verify" value="1"'.checked($arch_verify,true,false).'> ověřit SHA</label>'
+            . '<div><button type="submit">Filtrovat</button> '
+            . '<a href="'.esc_url(self::portal_url()).'" style="margin-left:6px;">Reset</a></div>'
+            . '</form>';
+
+        // ===== data =====
+        $items = Spolek_Archive::list_archives();
+        if (!$items) {
+            $html .= '<p style="opacity:.8;">Zatím žádné archivy.</p>';
             return $html;
         }
 
-        $html .= '<ul>';
-        foreach ($purged as $it) {
+        // Předpočty (pro souhrn)
+        $cnt_all = 0; $cnt_active = 0; $cnt_purged = 0; $cnt_missing = 0;
+        foreach ($items as $it) {
+            $cnt_all++;
+            $is_purged = !empty($it['purged_at']);
+            if ($is_purged) $cnt_purged++; else $cnt_active++;
+            $file = basename((string)($it['file'] ?? ''));
+            if ($file === '') continue;
+            $loc = Spolek_Archive::locate($file, !empty($it['storage']) ? (string)$it['storage'] : null);
+            if (!$loc || empty($loc['path']) || !is_file((string)$loc['path'])) $cnt_missing++;
+        }
+
+        $html .= '<div style="opacity:.85;margin:6px 0 10px 0;">'
+            . 'Celkem: <strong>'.(int)$cnt_all.'</strong> | V DB: <strong>'.(int)$cnt_active.'</strong> | Po purge: <strong>'.(int)$cnt_purged.'</strong> | Chybí soubor: <strong>'.(int)$cnt_missing.'</strong>'
+            . '</div>';
+
+        $html .= '<table style="width:100%;border-collapse:collapse;">'
+            . '<thead><tr>'
+            . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Archiv</th>'
+            . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Archivováno</th>'
+            . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">DB</th>'
+            . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Soubor</th>'
+            . ($arch_verify ? '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">SHA</th>' : '')
+            . '<th style="text-align:left;border-bottom:1px solid #ddd;padding:6px;">Akce</th>'
+            . '</tr></thead><tbody>';
+
+        $shown = 0;
+        foreach ($items as $it) {
             $file = basename((string)($it['file'] ?? ''));
             if ($file === '') continue;
 
-            $dl = admin_url('admin-post.php');
-            $dl = add_query_arg([
-                'action' => 'spolek_download_archive',
-                'file'   => $file,
-                '_nonce' => wp_create_nonce('spolek_download_archive_' . $file),
-            ], $dl);
-
             $title = (string)($it['title'] ?? $file);
-            $archived_at = (int)($it['archived_at'] ?? 0);
-            $purged_at   = (int)($it['purged_at'] ?? 0);
+            $vote_post_id = (int)($it['vote_post_id'] ?? 0);
+            $archived_at  = (int)($it['archived_at'] ?? 0);
+            $purged_at    = (int)($it['purged_at'] ?? 0);
+            $is_purged    = $purged_at > 0;
 
-            $html .= '<li>'
-                . '<a href="'.esc_url($dl).'">'.esc_html($title).'</a>'
-                . ' <span style="opacity:.75;">(archiv: '.esc_html($archived_at ? wp_date('j.n.Y H:i', $archived_at, wp_timezone()) : '–')
-                . ', smazáno z DB: '.esc_html($purged_at ? wp_date('j.n.Y H:i', $purged_at, wp_timezone()) : '–')
-                . ')</span>'
-                . '</li>';
+            if ($arch_q !== '') {
+                $hay = $title . ' ' . $file;
+                if (stripos($hay, $arch_q) === false) continue;
+            }
+            if ($from_ts > 0 && $archived_at > 0 && $archived_at < $from_ts) continue;
+            if ($to_ts > 0 && $archived_at > 0 && $archived_at > $to_ts) continue;
+
+            $loc = Spolek_Archive::locate($file, !empty($it['storage']) ? (string)$it['storage'] : null);
+            $path = ($loc && !empty($loc['path'])) ? (string)$loc['path'] : '';
+            $exists = ($path !== '' && is_file($path));
+
+            if ($arch_state === 'active' && $is_purged) continue;
+            if ($arch_state === 'purged' && !$is_purged) continue;
+            if ($arch_state === 'missing' && $exists) continue;
+
+            $sha_expected = (string)($it['sha256'] ?? '');
+            $sha_ok = null;
+            if ($arch_verify) {
+                if ($exists && $sha_expected !== '') {
+                    $sha_ok = hash_equals($sha_expected, hash_file('sha256', $path));
+                } elseif ($sha_expected !== '') {
+                    $sha_ok = false;
+                }
+            }
+
+            $db_label = $is_purged
+                ? ('smazáno ' . esc_html(wp_date('j.n.Y H:i', $purged_at, wp_timezone())))
+                : 'v DB';
+
+            $file_label = $exists ? '✅ ' : '❌ ';
+            $bytes = $exists ? (int)filesize($path) : (int)($it['bytes'] ?? 0);
+            $file_label .= esc_html($file) . ($bytes ? ' <span style="opacity:.75;">(' . esc_html(size_format($bytes)) . ')</span>' : '');
+
+            $dl = '';
+            if ($exists && $sha_ok !== false) {
+                $dl_url = add_query_arg([
+                    'action' => 'spolek_download_archive',
+                    'file'   => $file,
+                    '_nonce' => wp_create_nonce('spolek_download_archive_' . $file),
+                ], admin_url('admin-post.php'));
+                $dl = '<a class="button" href="'.esc_url($dl_url).'">Stáhnout</a>';
+            }
+
+            // Tlačítka pro aktivní záznamy (v DB)
+            $purge_btn = '';
+            $rebuild_btn = '';
+            if (!$is_purged && $vote_post_id > 0) {
+                $post = get_post($vote_post_id);
+                if ($post) {
+                    if ($exists) {
+                        $purge_btn .= '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'" style="display:inline-block;margin-left:6px;" onsubmit="return confirm(\'Opravdu smazat hlasování #' . (int)$vote_post_id . ' z databáze? Archivní ZIP zůstane uložen.\');">'
+                            . '<input type="hidden" name="action" value="spolek_purge_vote">'
+                            . '<input type="hidden" name="vote_post_id" value="'.(int)$vote_post_id.'">'
+                            . wp_nonce_field('spolek_purge_vote_'.$vote_post_id, '_nonce', true, false)
+                            . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
+                            . '<button type="submit">Smazat z DB</button>'
+                            . '</form>';
+                    } else {
+                        $rebuild_btn .= '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'" style="display:inline-block;margin-left:6px;">'
+                            . '<input type="hidden" name="action" value="spolek_archive_vote">'
+                            . '<input type="hidden" name="vote_post_id" value="'.(int)$vote_post_id.'">'
+                            . wp_nonce_field('spolek_archive_vote_'.$vote_post_id, '_nonce', true, false)
+                            . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
+                            . '<button type="submit">Znovu vytvořit ZIP</button>'
+                            . '</form>';
+                    }
+                } else {
+                    $db_label = '<span style="color:#b00;">záznam hlasování chybí</span>';
+                }
+            }
+
+            $title_html = esc_html($title);
+            if (!$is_purged && $vote_post_id > 0) {
+                $title_html = '<a href="'.esc_url(self::detail_url($vote_post_id)).'">'.esc_html($title).'</a>';
+            }
+
+            $html .= '<tr>'
+                . '<td style="border-bottom:1px solid #eee;padding:6px;">'.$title_html.'</td>'
+                . '<td style="border-bottom:1px solid #eee;padding:6px;">'.esc_html($archived_at ? wp_date('j.n.Y H:i', $archived_at, wp_timezone()) : '–').'</td>'
+                . '<td style="border-bottom:1px solid #eee;padding:6px;">'.$db_label.'</td>'
+                . '<td style="border-bottom:1px solid #eee;padding:6px;">'.$file_label.'</td>'
+                . ($arch_verify ? '<td style="border-bottom:1px solid #eee;padding:6px;">' . (
+                    $sha_ok === null ? '–' : ($sha_ok ? '✅ OK' : '<span style="color:#b00;">❌ MISMATCH</span>')
+                  ) . '</td>' : '')
+                . '<td style="border-bottom:1px solid #eee;padding:6px;">'.$dl.$purge_btn.$rebuild_btn.'</td>'
+                . '</tr>';
+
+            $shown++;
         }
-        $html .= '</ul>';
+
+        if ($shown === 0) {
+            $html .= '<tr><td colspan="'.($arch_verify ? 6 : 5).'" style="padding:10px;opacity:.8;">Nic nenalezeno pro zadané filtry.</td></tr>';
+        }
+
+        $html .= '</tbody></table>';
 
         return $html;
     }

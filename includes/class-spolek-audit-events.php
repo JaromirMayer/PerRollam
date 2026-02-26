@@ -47,6 +47,7 @@ final class Spolek_Audit_Events {
     public const ARCHIVE_CREATED      = 'archive.created';
     public const ARCHIVE_FAILED       = 'archive.failed';
     public const ARCHIVE_AUTO_FAILED  = 'archive.auto.failed';
+    public const ARCHIVE_SHA_MISMATCH = 'archive.sha_mismatch';
 
     // Close scan
     public const CLOSE_SCAN_ERROR     = 'close.scan.error';

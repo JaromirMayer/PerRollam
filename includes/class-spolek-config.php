@@ -78,6 +78,18 @@ final class Spolek_Config {
     public const ARCHIVE_DIR_SLUG        = 'spolek-hlasovani/archive';
     public const ARCHIVE_INDEX_FILE      = 'archives.json';
 
+    // ===== Životní cyklus (6.3) =====
+    // Close scan (dohánění uzávěrek)
+    public const CLOSE_SCAN_LIMIT        = 10;
+    public const SILENT_AFTER_DAYS       = 7;   // dohnání bez e-mailů, ale s PDF+ZIP
+
+    // Retence DB (po kolika dnech po ukončení lze bezpečně promazat DB)
+    public const PURGE_RETENTION_DAYS    = 30;
+    public const PURGE_SCAN_LIMIT        = 10;
+
+    // Archiv scan (best-effort tvorba ZIPů po uzávěrce)
+    public const ARCHIVE_SCAN_LIMIT      = 10;
+
     // Helper: prefixované tabulky
     public static function table(string $base): string {
         global $wpdb;

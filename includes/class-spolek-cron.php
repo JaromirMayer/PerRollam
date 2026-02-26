@@ -137,7 +137,7 @@ final class Spolek_Cron {
         $q = new WP_Query([
             'post_type'      => Spolek_Config::CPT,
             'post_status'    => 'publish',
-            'posts_per_page' => 10,
+            'posts_per_page' => max(1, (int) Spolek_Config::ARCHIVE_SCAN_LIMIT),
             'orderby'        => 'meta_value_num',
             'meta_key'       => Spolek_Config::META_CLOSE_PROCESSED_AT,
             'order'          => 'ASC',
@@ -192,12 +192,12 @@ final class Spolek_Cron {
         }
         if (!class_exists('Spolek_Archive') || !class_exists('Spolek_Hlasovani_MVP')) return 0;
 
-        $threshold = time() - (30 * DAY_IN_SECONDS);
+        $threshold = time() - ((int) Spolek_Config::PURGE_RETENTION_DAYS * DAY_IN_SECONDS);
 
         $q = new WP_Query([
             'post_type'      => Spolek_Config::CPT,
             'post_status'    => 'publish',
-            'posts_per_page' => 10,
+            'posts_per_page' => max(1, (int) Spolek_Config::PURGE_SCAN_LIMIT),
             'orderby'        => 'meta_value_num',
             'meta_key'       => Spolek_Config::META_END_TS,
             'order'          => 'ASC',
@@ -250,7 +250,10 @@ final class Spolek_Cron {
      *
      * @return array{total:int,silent:int,normal:int,errors:int,ids:array<int>}
      */
-    public static function close_scan(int $limit = 10, int $silent_after_days = 7): array {
+    public static function close_scan(
+        int $limit = Spolek_Config::CLOSE_SCAN_LIMIT,
+        int $silent_after_days = Spolek_Config::SILENT_AFTER_DAYS
+    ): array {
         if (class_exists('Spolek_Cron_Status')) {
             Spolek_Cron_Status::touch(self::HOOK_CLOSE_SCAN, true);
         }

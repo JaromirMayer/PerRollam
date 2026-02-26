@@ -373,6 +373,21 @@ final class Spolek_Archive {
         }
         $path = (string)$loc['path'];
 
+        // Bezpečnost: pokud máme očekávaný SHA256 v indexu, ověřit integritu před stažením.
+        $it = self::find_by_file($file);
+        $expected_sha = $it ? (string)($it['sha256'] ?? '') : '';
+        if ($expected_sha !== '') {
+            $actual_sha = hash_file('sha256', $path);
+            if (!hash_equals($expected_sha, $actual_sha)) {
+                if (class_exists('Spolek_Audit')) {
+                    Spolek_Audit::log(0, get_current_user_id(), Spolek_Audit_Events::ARCHIVE_SHA_MISMATCH, [
+                        'file' => $file,
+                    ]);
+                }
+                wp_die('Integrita archivu nesedí (SHA256). Stažení zablokováno.');
+            }
+        }
+
         header('Content-Type: application/zip');
         header('Content-Disposition: attachment; filename="' . $file . '"');
         header('Content-Length: ' . filesize($path));
