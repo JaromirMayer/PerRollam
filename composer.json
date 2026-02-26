@@ -1,13 +1,6 @@
 {
-  "name": "jaromir/perrollam",
-  "type": "wordpress-plugin",
-  "license": "GPL-2.0-or-later",
   "require": {
-    "php": ">=8.0",
     "dompdf/dompdf": "^3.1"
-  },
-  "require-dev": {
-    "phpdocumentor/phpdocumentor": "^3.9.1"
   },
   "autoload": {
     "classmap": [
@@ -15,7 +8,6 @@
     ]
   },
   "config": {
-    "optimize-autoloader": true,
-    "sort-packages": true
+    "optimize-autoloader": true
   }
 }
