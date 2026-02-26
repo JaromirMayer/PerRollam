@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpdocumentor
+  configVersion="3"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns="https://www.phpdoc.org"
+  xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/phpDocumentor/phpDocumentor/master/data/xsd/phpdoc.xsd"
+>
+  <title>PerRollam – API dokumentace</title>
+
+  <paths>
+    <output>docs/api</output>
+    <cache>.phpdoc/cache</cache>
+  </paths>
+
+  <version number="latest">
+    <api format="php">
+      <source dsn=".">
+        <path>spolek-hlasovani.php</path>
+        <path>includes</path>
+      </source>
+
+      <ignore hidden="true" symlinks="true">
+        <path>vendor/**/*</path>
+        <path>node_modules/**/*</path>
+        <path>docs/**/*</path>
+        <path>.phpdoc/**/*</path>
+        <path>.git/**/*</path>
+        <path>languages/**/*</path>
+      </ignore>
+
+      <extensions>
+        <extension>php</extension>
+      </extensions>
+
+      <visibility>private</visibility>
+      <default-package-name>PerRollam</default-package-name>
+      <include-source>false</include-source>
+
+      <markers>
+        <marker>TODO</marker>
+        <marker>FIXME</marker>
+      </markers>
+    </api>
+  </version>
+</phpdocumentor>
