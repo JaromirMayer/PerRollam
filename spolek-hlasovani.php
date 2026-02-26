@@ -3,7 +3,7 @@
  * Plugin Name:       PerRollam – Hlasování per rollam
  * Plugin URI:        https://solitare.eu/perrollam
  * Description:       Front-end hlasování pro členy spolku (ANO/NE/ZDRŽEL), uzávěrka, exporty, archivace.
- * Version:           5.7.1
+ * Version:           5.7.2
  * Requires at least: 6.2
  * Requires PHP:      8.0
  * Author:            Jaromír
@@ -17,7 +17,7 @@
 defined('ABSPATH') || exit;
 
 // === Konstanty pluginu (používají je include třídy) ===
-define('SPOLEK_HLASOVANI_VERSION', '5.7.1');
+define('SPOLEK_HLASOVANI_VERSION', '5.7.2');
 define('SPOLEK_HLASOVANI_FILE', __FILE__);
 define('SPOLEK_HLASOVANI_PATH', plugin_dir_path(__FILE__));
 define('SPOLEK_HLASOVANI_URL', plugin_dir_url(__FILE__));
