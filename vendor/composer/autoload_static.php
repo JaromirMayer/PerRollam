@@ -422,6 +422,7 @@ class ComposerStaticInitac2d307f4ed514763a8119f3523066bb
         'Spolek_Self_Heal' => __DIR__ . '/../..' . '/includes/class-spolek-self-heal.php',
         'Spolek_Tools' => __DIR__ . '/../..' . '/includes/class-spolek-tools.php',
         'Spolek_Tools_Controller' => __DIR__ . '/../..' . '/includes/class-spolek-tools-controller.php',
+        'Spolek_Upgrade' => __DIR__ . '/../..' . '/includes/class-spolek-upgrade.php',
         'Spolek_Vote_Processor' => __DIR__ . '/../..' . '/includes/class-spolek-vote-processor.php',
         'Spolek_Vote_Service' => __DIR__ . '/../..' . '/includes/class-spolek-vote-service.php',
         'Spolek_Votes' => __DIR__ . '/../..' . '/includes/class-spolek-votes.php',

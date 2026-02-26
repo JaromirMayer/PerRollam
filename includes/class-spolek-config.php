@@ -3,6 +3,16 @@ if (!defined('ABSPATH')) exit;
 
 final class Spolek_Config {
 
+    /**
+     * DB schema version (pro upgrade rutinu).
+     * Zvyšuj pouze při změně DB tabulek / jejich struktury.
+     */
+    public const DB_VERSION = 1;
+
+    /** Option keys (wp_options) */
+    public const OPT_DB_VERSION     = 'spolek_hlasovani_db_version';
+    public const OPT_PLUGIN_VERSION = 'spolek_hlasovani_plugin_version';
+
     // CPT + capability
     public const CPT        = 'spolek_hlasovani';
     public const CAP_MANAGE = 'manage_spolek_hlasovani';

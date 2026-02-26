@@ -88,6 +88,32 @@ final class Spolek_Mailer {
         ));
     }
 
+    /**
+     * 6.5.1 – Minimální integrační test: testovací e-mail + zápis do mail_log tabulky.
+     * Pozn.: používá vote_post_id = 0 (rezervované pro systémové/testovací logy).
+     * @return array{ok:bool,status:string,to:string}
+     */
+    public static function send_test_logged(int $user_id, string $to_email): array {
+        $user_id = (int)$user_id;
+        $to_email = sanitize_email((string)$to_email);
+        if ($user_id <= 0 || $to_email === '') {
+            if ($user_id > 0) {
+                self::log_mail(0, $user_id, 'test', 'no_email', 'missing email');
+            }
+            return ['ok' => false, 'status' => 'no_email', 'to' => (string)$to_email];
+        }
+
+        $subject = '[Spolek] Test e-mailu (' . (defined('SPOLEK_HLASOVANI_VERSION') ? SPOLEK_HLASOVANI_VERSION : 'n/a') . ')';
+        $body = "Toto je testovací e-mail z pluginu Spolek – Hlasování per rollam.\n\n"
+              . 'Web: ' . home_url('/') . "\n"
+              . 'Čas: ' . wp_date('j.n.Y H:i:s', time(), wp_timezone()) . "\n";
+
+        $ok = (bool) wp_mail($to_email, $subject, $body);
+        self::log_mail(0, $user_id, 'test', $ok ? 'sent' : 'fail', $ok ? null : 'wp_mail returned false');
+
+        return ['ok' => $ok, 'status' => $ok ? 'sent' : 'fail', 'to' => $to_email];
+    }
+
     // ======================================================================
     // Public API – všechny mail akce přes Spolek_Mailer
     // ======================================================================

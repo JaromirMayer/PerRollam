@@ -404,6 +404,13 @@ final class Spolek_Portal_Renderer {
             . '<button type="submit">Vyčistit index archivů</button>'
             . '</form>';
 
+        $html .= '<form method="post" action="'.$action.'" style="margin:0;">'
+            . '<input type="hidden" name="action" value="spolek_tools_integration_tests">'
+            . wp_nonce_field('spolek_tools_integration_tests', '_nonce', true, false)
+            . '<input type="hidden" name="return_to" value="'.esc_attr(self::portal_url()).'">'
+            . '<button type="submit">Integrační testy (PDF + mail log + uzávěrka)</button>'
+            . '</form>';
+
         $html .= '</div>';
 
         // Cron status (detail)

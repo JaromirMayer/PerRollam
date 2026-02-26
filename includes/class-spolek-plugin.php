@@ -15,6 +15,7 @@ final class Spolek_Plugin {
      */
     private const DEPENDENCIES = [
         'includes/class-spolek-config.php',
+        'includes/class-spolek-upgrade.php',
         'includes/class-spolek-cron-status.php',
         'includes/class-spolek-vote-service.php',
         'includes/class-spolek-admin.php',
@@ -74,6 +75,11 @@ final class Spolek_Plugin {
         $this->booted = true;
 
         self::require_dependencies();
+
+        // 6.5.2 – DB upgrade rutina (best-effort; dbDelta jen při změně verze)
+        if (class_exists('Spolek_Upgrade')) {
+            Spolek_Upgrade::maybe_upgrade(false);
+        }
         
         if (class_exists('Spolek_Votes_Controller')) {
         (new Spolek_Votes_Controller())->register();
@@ -119,6 +125,10 @@ final class Spolek_Plugin {
         }
 
         self::require_dependencies();
+
+        if (class_exists('Spolek_Upgrade')) {
+            Spolek_Upgrade::maybe_upgrade(true);
+        }
 
         if (class_exists('Spolek_Archive')) {
             Spolek_Archive::ensure_storage();

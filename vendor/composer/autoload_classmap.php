@@ -295,6 +295,7 @@ return array(
     'Spolek_Self_Heal' => $baseDir . '/includes/class-spolek-self-heal.php',
     'Spolek_Tools' => $baseDir . '/includes/class-spolek-tools.php',
     'Spolek_Tools_Controller' => $baseDir . '/includes/class-spolek-tools-controller.php',
+    'Spolek_Upgrade' => $baseDir . '/includes/class-spolek-upgrade.php',
     'Spolek_Vote_Processor' => $baseDir . '/includes/class-spolek-vote-processor.php',
     'Spolek_Vote_Service' => $baseDir . '/includes/class-spolek-vote-service.php',
     'Spolek_Votes' => $baseDir . '/includes/class-spolek-votes.php',

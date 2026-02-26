@@ -90,4 +90,14 @@ final class Spolek_Audit_Events {
     public const TOOLS_TEST_MAIL_FAIL = 'tools.test_mail.fail';
     public const TOOLS_TEST_PDF_OK    = 'tools.test_pdf.ok';
     public const TOOLS_TEST_PDF_FAIL  = 'tools.test_pdf.fail';
+
+    // Upgrade / release hardening
+    public const UPGRADE_DB_START = 'upgrade.db.start';
+    public const UPGRADE_DB_DONE  = 'upgrade.db.done';
+    public const UPGRADE_DB_FAIL  = 'upgrade.db.fail';
+
+    // Integration tests
+    public const TOOLS_IT_START = 'tools.it.start';
+    public const TOOLS_IT_DONE  = 'tools.it.done';
+    public const TOOLS_IT_FAIL  = 'tools.it.fail';
 }
