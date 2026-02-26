@@ -291,7 +291,9 @@ final class Spolek_Mailer {
                     $sig = Spolek_PDF_Service::member_sig($uid, $vote_post_id, $exp);
                     $pdf_link = Spolek_PDF_Service::member_landing_url($vote_post_id, $uid, $exp, $sig);
                 }
-                $body .= "\n\nZápis PDF ke stažení (vyžaduje přihlášení):\n<{$pdf_link}>\n";
+                // Pozn.: v HTML režimu se text do šablony escapuje; URL musí být bez "< >",
+                // jinak některé mail klienty přilepí ">" do posledního parametru a podpis pak nesedí.
+                $body .= "\n\nZápis PDF ke stažení (vyžaduje přihlášení):\n{$pdf_link}\n";
             }
 
             $status = self::send_member_mail($vote_post_id, $u, 'result', $subject, $body, $attachments, $silent_mode);
@@ -421,7 +423,11 @@ final class Spolek_Mailer {
      */
     private static function render_html(string $subject, string $body, string $type, int $vote_post_id, $user): string {
         $site = wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES);
-        $safe_body = esc_html($body);
+
+        // Bezpečný HTML body + klikatelné odkazy.
+        // Důvod: při HTML e-mailu se "&" escapuje na "&amp;"; auto-link v některých klientech
+        // pak vezme doslovný text a odkaz přestane fungovat (parametry se rozbijí).
+        $safe_body = make_clickable(esc_html($body));
 
         $html = '<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#f5f5f5;">'
               . '<div style="max-width:680px;margin:0 auto;padding:18px;">'

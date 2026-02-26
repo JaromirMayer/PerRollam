@@ -1,5 +1,8 @@
 # Changelog – Spolek: Hlasování per rollam
 
+## 0.6.5 (2026-02-26)
+- Fix: PDF odkaz v e-mailu (HTML režim) – odkazy jsou klikatelné a parametry se nerozbíjí ("&amp;" / "< >").
+
 ## 0.6.4 (2026-02-26)
 - 6.5: DB upgrade rutina (dbDelta) při update pluginu bez nutnosti re-aktivace.
 - 6.5: Integrační testy v sekci **Nástroje** (PDF + mail_log + uzávěrka v silent režimu).
