@@ -1,5 +1,9 @@
 # Changelog – Spolek: Hlasování per rollam
 
+## 0.6.8 (2026-02-26)
+- Admin UX: Archivní ZIP soubory (index) – checkboxy + hromadné „Smazat vybrané ZIP (ponechat v DB)“.
+- Admin UX: Nástroje – sekce „Cron status (detail + Run now)“ je vždy zobrazená (není rozklikávací).
+
 ## 0.6.7 (2026-02-26)
 - Admin UX: Archiv uzavřených hlasování – checkboxy + hromadné „Smazat vybrané z DB“.
 

@@ -482,6 +482,78 @@ final class Spolek_Archive {
     }
 
     /**
+     * Smaže archivní ZIP soubor z úložiště, ale ponechá hlasování v DB.
+     * Použití: admin UX pro "pročištění" diskového úložiště.
+     *
+     * Bezpečnost:
+     * - maže jen soubor, který existuje v indexu archivů
+     * - ověřuje, že hlasování stále existuje (není po purge)
+     *
+     * @return array{ok:bool,error?:string,vote_post_id?:int,file?:string}
+     */
+    public static function delete_archive_file_keep_db(string $file, int $actor_user_id = 0): array {
+        self::ensure_storage();
+
+        $file = sanitize_file_name(basename((string)$file));
+        if ($file === '' || strpos($file, '..') !== false) {
+            return ['ok' => false, 'error' => 'invalid_file'];
+        }
+
+        $it = self::find_by_file($file);
+        if (!$it) {
+            return ['ok' => false, 'error' => 'index_item_not_found'];
+        }
+
+        $vote_post_id = (int)($it['vote_post_id'] ?? 0);
+        if ($vote_post_id <= 0) {
+            return ['ok' => false, 'error' => 'vote_post_id_missing'];
+        }
+
+        if (!empty($it['purged_at'])) {
+            return ['ok' => false, 'error' => 'already_purged'];
+        }
+
+        $post = get_post($vote_post_id);
+        if (!$post) {
+            return ['ok' => false, 'error' => 'vote_not_found'];
+        }
+
+        $storage_hint = !empty($it['storage']) ? (string)$it['storage'] : null;
+        $loc = self::locate($file, $storage_hint);
+        if (!$loc || empty($loc['path']) || !is_file((string)$loc['path'])) {
+            return ['ok' => false, 'error' => 'archive_file_missing', 'vote_post_id' => $vote_post_id, 'file' => $file];
+        }
+
+        $path = (string)$loc['path'];
+        $ok = @unlink($path);
+        if (!$ok) {
+            return ['ok' => false, 'error' => 'unlink_failed', 'vote_post_id' => $vote_post_id, 'file' => $file];
+        }
+
+        $now = time();
+
+        // index: jen přidáme značky, nic nemažeme (ať jde dohledat historie)
+        self::upsert_index_item([
+            'vote_post_id'    => $vote_post_id,
+            'deleted_at'      => $now,
+            'deleted_by'      => $actor_user_id ?: null,
+            'deleted_reason'  => 'manual_keep_db',
+        ]);
+
+        // meta: naznačíme, že ZIP už na disku není
+        update_post_meta($vote_post_id, self::META_ARCHIVE_ERROR, 'ZIP smazán správcem (soubor odstraněn, DB zachována).');
+
+        if (class_exists('Spolek_Audit') && class_exists('Spolek_Audit_Events')) {
+            Spolek_Audit::log($vote_post_id, $actor_user_id ?: null, Spolek_Audit_Events::ARCHIVE_FILE_DELETE, [
+                'file'    => $file,
+                'storage' => (string)($loc['storage'] ?? ''),
+            ]);
+        }
+
+        return ['ok' => true, 'vote_post_id' => $vote_post_id, 'file' => $file];
+    }
+
+    /**
      * Smaže hlasování z DB (post + meta + řádky z vlastních tabulek),
      * ale archivní ZIP ponechá na disku (a v indexu nastaví purged_at).
      */

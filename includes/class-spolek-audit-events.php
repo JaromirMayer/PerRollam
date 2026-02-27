@@ -67,6 +67,8 @@ final class Spolek_Audit_Events {
     public const PURGE_SCAN_MANUAL     = 'purge.scan.manual';
     public const ARCHIVE_STORAGE_TEST  = 'archive.storage_test';
     public const ARCHIVE_INDEX_CLEANUP = 'archive.index.cleanup';
+    public const ARCHIVE_FILE_DELETE   = 'archive.file.delete';
+    public const ARCHIVE_FILE_DELETE_FAIL = 'archive.file.delete.fail';
 
     // Self-heal (request-driven watchdog)
     public const SELF_HEAL_TICK      = 'self_heal.tick';
