@@ -1,0 +1,8 @@
+{
+  "version": "6.7.5",
+  "download_url": "https://updates.solitare.eu/perrollam/perrollam-6.7.5.zip",
+  "homepage": "https://updates.solitare.eu/perrollam",
+  "tested": "6.7",
+  "requires": "6.9",
+  "requires_php": "8.0"
+}
