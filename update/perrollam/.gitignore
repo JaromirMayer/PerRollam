@@ -1,0 +1,17 @@
+# NetBeans
+nbproject/private/
+
+# Composer
+vendor/
+
+# Buildy a ZIPy
+build/
+*.zip
+
+# phpDocumentor
+.phpdoc/cache/
+docs/api/
+
+# OS bordel
+.DS_Store
+Thumbs.db
