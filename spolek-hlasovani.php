@@ -4,7 +4,7 @@
  * Plugin URI:        https://updates.solitare.eu/perrollam
  * Update URI:        https://updates.solitare.eu/perrollam/
  * Description:       Front-end hlasování pro členy spolků (ANO/NE/ZDRŽEL), uzávěrka, exporty, archivace.
- * Version: 6.7.9
+ * Version: 6.8.0
  * Requires at least: 6.9
  * Requires PHP:      8.0
  * Author:            Jaromír M.
@@ -18,7 +18,7 @@
 defined('ABSPATH') || exit;
 
 // === Konstanty pluginu (používají je include třídy) ===
-define('SPOLEK_HLASOVANI_VERSION', '6.7.9');
+define('SPOLEK_HLASOVANI_VERSION', '6.8.0');
 define('SPOLEK_HLASOVANI_FILE', __FILE__);
 define('SPOLEK_HLASOVANI_PATH', plugin_dir_path(__FILE__));
 define('SPOLEK_HLASOVANI_URL', plugin_dir_url(__FILE__));
